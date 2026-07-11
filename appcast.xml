@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Cadence</title>
+        <link>https://raw.githubusercontent.com/Narcissus-tazetta/Cadence/main/appcast.xml</link>
+        <description>Cadenceの更新情報</description>
+        <language>ja</language>
+    </channel>
+</rss>

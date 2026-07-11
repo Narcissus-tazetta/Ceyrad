@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Support/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Support/Info.plist
+
+      - name: Build Cadence.app
+        run: ./make-app.sh
+
+      - name: Zip app bundle
+        run: ditto -c -k --sequesterRsrc --keepParent Cadence.app "Cadence-${{ github.ref_name }}-macos.zip"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build DMG
+        run: |
+          chmod +x scripts/make_dmg.sh
+          VERSION="${{ github.ref_name }}"
+          ./scripts/make_dmg.sh "${VERSION#v}"
+          mv "dist/Cadence-v${VERSION#v}-macos.dmg" "Cadence-${{ github.ref_name }}-macos.dmg"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Cadence-${{ github.ref_name }}-macos.zip
+            Cadence-${{ github.ref_name }}-macos.dmg
+          generate_release_notes: true
+
+      # SPARKLE_PRIVATE_KEY未設定の場合はSparkleの自動アップデートを配信しない
+      # （generate_keys で鍵を作りリポジトリのSecretsに登録すると有効になる。詳細はREADME参照）
+      - name: Sign update and publish appcast.xml
+        if: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          chmod +x scripts/update_appcast.sh
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP_ABS_PATH="$(pwd)/Cadence-${{ github.ref_name }}-macos.zip"
+
+          # appcast.xmlはリリースタグではなくmainブランチで管理する。
+          # 署名対象のzipは既にビルド済みなのでワークツリーを退避してから
+          # mainへ切り替え、appcast.xmlだけを更新してpushする。
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          # 「Set version from tag」で書き換えたInfo.plistが残っていると、タグとmainで
+          # 内容が異なる場合にcheckoutが失敗するため、切り替え前に元へ戻す
+          git checkout -- Support/Info.plist
+          git checkout main
+
+          ./scripts/update_appcast.sh \
+            "$ZIP_ABS_PATH" \
+            "$VERSION" \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Cadence-${{ github.ref_name }}-macos.zip"
+
+          git add appcast.xml
+          git commit -m "Update appcast.xml for ${{ github.ref_name }}"
+          git push origin main

@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Apple-music-status}",
+      "name": "Debug Cadence",
+      "target": "Cadence",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug Cadence"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Apple-music-status}",
+      "name": "Release Cadence",
+      "target": "Cadence",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release Cadence"
+    }
+  ]
+}

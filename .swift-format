@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "lineLength": 130,
+  "indentation": { "spaces": 4 },
+  "tabWidth": 4,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeControlFlowKeywords": false,
+  "lineBreakBeforeEachArgument": false,
+  "rules": {
+    "AlwaysUseLowerCamelCase": true,
+    "DoNotUseSemicolons": true,
+    "FileScopedDeclarationPrivacy": false,
+    "NoAccessLevelOnExtensionDeclaration": true,
+    "OneVariableDeclarationPerLine": true,
+    "OrderedImports": true,
+    "UseEarlyExits": false,
+    "UseShorthandTypeNames": true
+  }
+}

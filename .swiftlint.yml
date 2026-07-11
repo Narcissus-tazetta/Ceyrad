@@ -1,0 +1,38 @@
+included:
+  - Sources
+
+line_length:
+  warning: 130
+  error: 160
+
+function_body_length:
+  warning: 80
+  error: 120
+
+type_body_length:
+  warning: 300
+  error: 400
+
+file_length:
+  warning: 400
+  error: 500
+
+identifier_name:
+  min_length: 1
+  excluded:
+    - id
+
+trailing_comma:
+  mandatory_comma: true
+
+disabled_rules:
+  - todo
+  # brace placement is owned by swift-format; swift-format puts the opening
+  # brace on its own line for conditions that wrap across multiple lines.
+  - opening_brace
+
+opt_in_rules:
+  - closure_spacing
+  - empty_count
+  - fatal_error_message
+  - redundant_type_annotation
