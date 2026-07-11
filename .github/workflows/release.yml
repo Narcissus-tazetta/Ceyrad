@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "リリースするバージョン (例: 1.2.3)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,9 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Determine version
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ inputs.version }}"
+          else
+            RAW_VERSION="$GITHUB_REF_NAME"
+          fi
+          VERSION="${RAW_VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Set version from tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.vars.outputs.version }}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Support/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Support/Info.plist
 
@@ -24,7 +42,7 @@ jobs:
         run: ./make-app.sh
 
       - name: Zip app bundle
-        run: ditto -c -k --sequesterRsrc --keepParent Cadence.app "Cadence-${{ github.ref_name }}-macos.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent Cadence.app "Cadence-${{ steps.vars.outputs.tag }}-macos.zip"
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -32,28 +50,37 @@ jobs:
       - name: Build DMG
         run: |
           chmod +x scripts/make_dmg.sh
-          VERSION="${{ github.ref_name }}"
-          ./scripts/make_dmg.sh "${VERSION#v}"
-          mv "dist/Cadence-v${VERSION#v}-macos.dmg" "Cadence-${{ github.ref_name }}-macos.dmg"
+          ./scripts/make_dmg.sh "${{ steps.vars.outputs.version }}"
+          mv "dist/Cadence-v${{ steps.vars.outputs.version }}-macos.dmg" "Cadence-${{ steps.vars.outputs.tag }}-macos.dmg"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.vars.outputs.tag }}
           files: |
-            Cadence-${{ github.ref_name }}-macos.zip
-            Cadence-${{ github.ref_name }}-macos.dmg
+            Cadence-${{ steps.vars.outputs.tag }}-macos.zip
+            Cadence-${{ steps.vars.outputs.tag }}-macos.dmg
           generate_release_notes: true
+
+      # if:にsecretsコンテキストを直接使うと "Unrecognized named-value: 'secrets'" になるため、
+      # 事前のステップでSPARKLE_PRIVATE_KEYの有無をoutputに変換してから参照する。
+      - name: Check Sparkle key
+        id: sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: echo "has_key=$([ -n "$SPARKLE_PRIVATE_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       # SPARKLE_PRIVATE_KEY未設定の場合はSparkleの自動アップデートを配信しない
       # （generate_keys で鍵を作りリポジトリのSecretsに登録すると有効になる。詳細はREADME参照）
       - name: Sign update and publish appcast.xml
-        if: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+        if: ${{ steps.sparkle.outputs.has_key == 'true' }}
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           chmod +x scripts/update_appcast.sh
-          VERSION="${GITHUB_REF_NAME#v}"
-          ZIP_ABS_PATH="$(pwd)/Cadence-${{ github.ref_name }}-macos.zip"
+          VERSION="${{ steps.vars.outputs.version }}"
+          TAG="${{ steps.vars.outputs.tag }}"
+          ZIP_ABS_PATH="$(pwd)/Cadence-${TAG}-macos.zip"
 
           # appcast.xmlはリリースタグではなくmainブランチで管理する。
           # 署名対象のzipは既にビルド済みなのでワークツリーを退避してから
@@ -69,8 +96,8 @@ jobs:
           ./scripts/update_appcast.sh \
             "$ZIP_ABS_PATH" \
             "$VERSION" \
-            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Cadence-${{ github.ref_name }}-macos.zip"
+            "https://github.com/${{ github.repository }}/releases/download/${TAG}/Cadence-${TAG}-macos.zip"
 
           git add appcast.xml
-          git commit -m "Update appcast.xml for ${{ github.ref_name }}"
+          git commit -m "Update appcast.xml for ${TAG}"
           git push origin main
