@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import Cadence
+@testable import Ceyrad
 
 final class DebouncerTests: XCTestCase {
     func testOnlyLastScheduledBlockRuns() {

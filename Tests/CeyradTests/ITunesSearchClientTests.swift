@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import Cadence
+@testable import Ceyrad
 
 final class ITunesSearchClientTests: XCTestCase {
     private func result(

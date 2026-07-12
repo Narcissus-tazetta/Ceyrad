@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Cadence.app から配布用のDMGを作る。
+# Ceyrad.app から配布用のDMGを作る。
 # create-dmgがあれば見た目の整ったDMGを、なければhdiutilで最低限のDMGを作る。
 set -euo pipefail
 
-APP_NAME="Cadence"
+APP_NAME="Ceyrad"
 VERSION="${1:-}"
 CREATE_DMG_COMMAND="${CREATE_DMG_COMMAND:-create-dmg}"
 

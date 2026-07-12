@@ -11,7 +11,7 @@ enum MusicAppleScript {
     private(set) static var notAuthorized = false
 
     private static let log = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "Cadence", category: "AppleScript"
+        subsystem: Bundle.main.bundleIdentifier ?? "Ceyrad", category: "AppleScript"
     )
     private static let queue = DispatchQueue(label: "music-applescript", qos: .userInitiated)
 

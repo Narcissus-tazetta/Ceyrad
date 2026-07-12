@@ -39,7 +39,7 @@ enum LinkType: String, CaseIterable {
 
 final class SettingsStore {
     static let shared = SettingsStore()
-    static let defaultRepositoryURL = "https://github.com/Narcissus-tazetta/Cadence"
+    static let defaultRepositoryURL = "https://github.com/Narcissus-tazetta/Ceyrad"
     /// このアプリ専用のDiscord Application ID。ユーザーが変更する必要はないため固定値とする。
     static let discordClientId = "1525381518258606130"
 

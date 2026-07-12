@@ -4,21 +4,21 @@
       "type": "swift",
       "request": "launch",
       "args": [],
-      "cwd": "${workspaceFolder:Apple-music-status}",
-      "name": "Debug Cadence",
-      "target": "Cadence",
+      "cwd": "${workspaceFolder:Ceyrad}",
+      "name": "Debug Ceyrad",
+      "target": "Ceyrad",
       "configuration": "debug",
-      "preLaunchTask": "swift: Build Debug Cadence"
+      "preLaunchTask": "swift: Build Debug Ceyrad"
     },
     {
       "type": "swift",
       "request": "launch",
       "args": [],
-      "cwd": "${workspaceFolder:Apple-music-status}",
-      "name": "Release Cadence",
-      "target": "Cadence",
+      "cwd": "${workspaceFolder:Ceyrad}",
+      "name": "Release Ceyrad",
+      "target": "Ceyrad",
       "configuration": "release",
-      "preLaunchTask": "swift: Build Release Cadence"
+      "preLaunchTask": "swift: Build Release Ceyrad"
     }
   ]
 }

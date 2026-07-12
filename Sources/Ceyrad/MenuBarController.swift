@@ -16,7 +16,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         super.init()
         statusItem.button?.image = NSImage(
             systemSymbolName: "music.note",
-            accessibilityDescription: "Cadence"
+            accessibilityDescription: "Ceyrad"
         )
         let menu = NSMenu()
         menu.delegate = self
@@ -57,7 +57,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(actionItem(t("Check for Updates…", "アップデートを確認…"), #selector(checkForUpdates)))
         menu.addItem(.separator())
-        let quitItem = actionItem(t("Quit Cadence", "Cadenceを終了"), #selector(quit))
+        let quitItem = actionItem(t("Quit Ceyrad", "Ceyradを終了"), #selector(quit))
         quitItem.keyEquivalent = "q"
         menu.addItem(quitItem)
     }
@@ -287,7 +287,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             showError(
                 t(
                     "Could not change the login item. If running the bare executable "
-                        + "(not Cadence.app), use a LaunchAgent instead.\n\(error.localizedDescription)",
+                        + "(not Ceyrad.app), use a LaunchAgent instead.\n\(error.localizedDescription)",
                     "ログイン項目を変更できませんでした。.appバンドルではなく素の実行ファイルで"
                         + "起動している場合はLaunchAgentを使ってください。\n\(error.localizedDescription)"
                 )

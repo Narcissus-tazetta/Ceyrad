@@ -1,9 +1,9 @@
 import XCTest
 
-@testable import Cadence
+@testable import Ceyrad
 
 final class ActivityBuilderTests: XCTestCase {
-    private static let suiteName = "CadenceTests.ActivityBuilder"
+    private static let suiteName = "CeyradTests.ActivityBuilder"
     private var settings: SettingsStore!
     private var defaults: UserDefaults!
 

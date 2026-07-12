@@ -2,18 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "Cadence",
+    name: "Ceyrad",
     platforms: [.macOS(.v13)],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
     ],
     targets: [
         .executableTarget(
-            name: "Cadence",
+            name: "Ceyrad",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/Cadence",
+            path: "Sources/Ceyrad",
             linkerSettings: [
                 // 素のSPM実行ファイルにInfo.plistを埋め込む
                 // (LSUIElement / NSAppleEventsUsageDescription をTCCに認識させるため)
@@ -26,9 +26,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "CadenceTests",
-            dependencies: ["Cadence"],
-            path: "Tests/CadenceTests"
+            name: "CeyradTests",
+            dependencies: ["Ceyrad"],
+            path: "Tests/CeyradTests"
         ),
     ]
 )

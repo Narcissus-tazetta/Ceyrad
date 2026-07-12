@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import Cadence
+@testable import Ceyrad
 
 final class MusicAppleScriptTests: XCTestCase {
     private let sep = "\u{1F}"

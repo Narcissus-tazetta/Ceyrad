@@ -16,7 +16,7 @@ final class DiscordRPCClient {
     var onStateChange: ((ConnState) -> Void)?
 
     private let log = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "Cadence", category: "DiscordRPC"
+        subsystem: Bundle.main.bundleIdentifier ?? "Ceyrad", category: "DiscordRPC"
     )
     private let queue = DispatchQueue(label: "discord-rpc")
     private var fd: Int32 = -1

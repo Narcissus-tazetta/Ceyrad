@@ -38,11 +38,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Support/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Support/Info.plist
 
-      - name: Build Cadence.app
+      - name: Build Ceyrad.app
         run: ./make-app.sh
 
       - name: Zip app bundle
-        run: ditto -c -k --sequesterRsrc --keepParent Cadence.app "Cadence-${{ steps.vars.outputs.tag }}-macos.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent Ceyrad.app "Ceyrad-${{ steps.vars.outputs.tag }}-macos.zip"
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -51,15 +51,15 @@ jobs:
         run: |
           chmod +x scripts/make_dmg.sh
           ./scripts/make_dmg.sh "${{ steps.vars.outputs.version }}"
-          mv "dist/Cadence-v${{ steps.vars.outputs.version }}-macos.dmg" "Cadence-${{ steps.vars.outputs.tag }}-macos.dmg"
+          mv "dist/Ceyrad-v${{ steps.vars.outputs.version }}-macos.dmg" "Ceyrad-${{ steps.vars.outputs.tag }}-macos.dmg"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
           files: |
-            Cadence-${{ steps.vars.outputs.tag }}-macos.zip
-            Cadence-${{ steps.vars.outputs.tag }}-macos.dmg
+            Ceyrad-${{ steps.vars.outputs.tag }}-macos.zip
+            Ceyrad-${{ steps.vars.outputs.tag }}-macos.dmg
           generate_release_notes: true
 
       # if:にsecretsコンテキストを直接使うと "Unrecognized named-value: 'secrets'" になるため、
@@ -80,7 +80,7 @@ jobs:
           chmod +x scripts/update_appcast.sh
           VERSION="${{ steps.vars.outputs.version }}"
           TAG="${{ steps.vars.outputs.tag }}"
-          ZIP_ABS_PATH="$(pwd)/Cadence-${TAG}-macos.zip"
+          ZIP_ABS_PATH="$(pwd)/Ceyrad-${TAG}-macos.zip"
 
           # appcast.xmlはリリースタグではなくmainブランチで管理する。
           # 署名対象のzipは既にビルド済みなのでワークツリーを退避してから
@@ -96,7 +96,7 @@ jobs:
           ./scripts/update_appcast.sh \
             "$ZIP_ABS_PATH" \
             "$VERSION" \
-            "https://github.com/${{ github.repository }}/releases/download/${TAG}/Cadence-${TAG}-macos.zip"
+            "https://github.com/${{ github.repository }}/releases/download/${TAG}/Ceyrad-${TAG}-macos.zip"
 
           git add appcast.xml
           git commit -m "Update appcast.xml for ${TAG}"

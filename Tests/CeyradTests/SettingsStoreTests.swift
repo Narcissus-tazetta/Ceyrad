@@ -1,9 +1,9 @@
 import XCTest
 
-@testable import Cadence
+@testable import Ceyrad
 
 final class SettingsStoreTests: XCTestCase {
-    private static let suiteName = "CadenceTests.SettingsStore"
+    private static let suiteName = "CeyradTests.SettingsStore"
     private var settings: SettingsStore!
     private var defaults: UserDefaults!
 

@@ -2,5 +2,5 @@
 .swiftpm/
 *.xcodeproj
 .DS_Store
-Cadence.app/
+Ceyrad.app/
 dist/
