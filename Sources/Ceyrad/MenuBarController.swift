@@ -14,10 +14,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "music.note",
-            accessibilityDescription: "Ceyrad"
-        )
+        statusItem.button?.image = StatusIcon.make()
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
