@@ -1,82 +1,86 @@
 # Ceyrad
 
-Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に表示するmacOSメニューバーアプリ。
+[日本語版はこちら](README.ja.md)
 
-- 曲名・アーティスト・アルバムアート・再生プログレスバーを「〜を再生中」として表示
-- ボタン最大2個（曲/アーティスト/アルバムページ、カスタムURL、リポジトリ）
-- **Apple Musicが起動していないときは何もしない**（ポーリングなし・完全イベント駆動）
+A macOS menu bar app that shows the track currently playing in Apple Music as your Discord status (Rich Presence).
 
-## 動作環境
+- Shows title, artist, album art, and a playback progress bar as "Listening to ~"
+- Up to 2 buttons (song / artist / album page, custom URL, repository)
+- **Does nothing when Apple Music isn't running** (no polling — fully event-driven)
 
-- macOS 13以降
-- Discordデスクトップアプリ
+## Requirements
 
-## インストール
+- macOS 13 or later
+- Discord desktop app
 
-1. [Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases) から最新の `Ceyrad.app` をダウンロードし、`/Applications` に移動する
-2. `Ceyrad.app` を開く
-   - ad-hoc署名のため、初回起動時に「開発元を確認できません」と表示されることがある。その場合はFinderでアプリを右クリック→「開く」から起動する
-3. メニューバーに ♪ アイコンが表示されれば起動完了
+## Installation
 
-## 使い方
+1. Download the latest `Ceyrad.app` from [Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases) and move it to `/Applications`
+2. Open `Ceyrad.app`
+   - Since this is an independently distributed app (ad-hoc signed, not notarized by Apple), macOS may show "cannot verify developer" on first launch. If so, use either of the following to open it:
+     - Right-click the app in Finder and choose "Open"
+     - If it's still blocked, open "System Settings > Privacy & Security", scroll down to the message saying `"Ceyrad" was blocked to protect your Mac`, and click "Open Anyway"
+3. If a ♪ icon appears in the menu bar, it launched successfully
 
-1. Apple Musicで曲を再生する
-2. 初回はmacOSが「Apple Musicの制御を許可しますか」と聞いてくるので **許可** する
-   （再生位置の取得に使う。拒否してもアプリは動くが、プログレスバーだけ出なくなる）
-3. Discordを起動していれば数秒でステータスに反映される。Discordを後から起動した場合も自動で検知して接続する
+## Usage
 
-## メニューバーからの設定
+1. Play a track in Apple Music
+2. On first use, macOS will ask "Allow Ceyrad to control Apple Music?" — **Allow** it
+   (used to get the playback position; if denied, the app still works but the progress bar won't show)
+3. If Discord is already running, your status updates within a few seconds. If you launch Discord afterward, it's detected automatically and connects
 
-| 項目 | 内容 |
+## Menu bar settings
+
+| Item | Description |
 |---|---|
-| ボタン1 / ボタン2 | 遷移先: 曲ページ / アーティストページ / アルバムページ / カスタムURL / リポジトリ / 無効。「ラベルを変更…」でボタンの表示文言（32文字まで）も変えられる |
-| Set Custom URL… | リンク先「カスタムURL」で使うURL |
-| Set Repository URL… | リポジトリボタンと、URL解決失敗時のフォールバック先 |
-| When Paused | 一時停止時の挙動: 表示継続 / 即消す / 1・3・5・10分後に消す（既定: 5分後） |
-| Launch at Login | ログイン時にCeyradを自動起動する（クリックでオン/オフ切り替え） |
-| Language | メニュー（この設定画面）の表示言語を English / 日本語 で切り替える。Discord側に表示される文言（接続ステータスやボタンラベルなど）は対象外で常に英語のまま |
-| Reconnect to Discord | Discordへの接続をやり直す |
-| Check for Updates… | [Sparkle](#自動更新sparkle)で最新版を確認・インストール |
+| Button 1 / Button 2 | Link target: song page / artist page / album page / custom URL / repository / disabled. "Change Label…" also lets you edit the button's display text (up to 32 characters) |
+| Set Custom URL… | The URL used when a button's link target is "custom URL" |
+| Set Repository URL… | The repository button's target, and the fallback used when URL resolution fails |
+| When Paused | Behavior on pause: keep showing / clear immediately / clear after 1, 3, 5, or 10 minutes (default: 5 minutes) |
+| Launch at Login | Automatically start Ceyrad at login (click to toggle on/off) |
+| Language | Switches the display language of the menu (this settings UI) between English / 日本語. Text shown on the Discord side (connection status, button labels, etc.) is not affected and always stays in English |
+| Reconnect to Discord | Retries the connection to Discord |
+| Check for Updates… | Check for and install the latest version via [Sparkle](#auto-update-sparkle) |
 
-## ログイン時に自動起動（任意）
+## Auto-launch at login (optional)
 
-メニューバーの「ログイン時に自動起動」をクリックしてオンにする。
-（「システム設定 > 一般 > ログイン項目」に `Ceyrad.app` を手動で追加しても同じ）
+Click "Launch at Login" in the menu bar to turn it on.
+(Manually adding `Ceyrad.app` to "System Settings > General > Login Items" has the same effect.)
 
-## よくある質問
+## FAQ
 
-**再生中に本アプリを起動（再起動）しても曲が反映されない**
-起動時の曲情報の取得にはオートメーション権限が必要です。「システム設定 > プライバシーとセキュリティ > オートメーション」で「ミュージック」がオンになっているか確認してください。オンにできない・一覧にない場合は一度アプリを再起動すると許可ダイアログが再表示されます。権限がない間も曲の切り替え・一時停止などの通知は届くため、次の操作からは反映されます（再生位置のプログレスバーは出ません）。メニューバーに「Music Control: Not Authorized ⚠️」と出ている場合はこの状態です。
+**The current track doesn't show up when I (re)launch the app while music is playing**
+Getting the current track info at launch requires Automation permission. Check "System Settings > Privacy & Security > Automation" to make sure "Music" is enabled. If you can't enable it or it's not in the list, restart the app once to bring back the permission dialog. Even without this permission, notifications for track changes, pauses, etc. still arrive, so it will update from the next action onward (the playback progress bar just won't appear). If the menu bar shows "Music Control: Not Authorized ⚠️", this is the cause.
 
-**ボタンが自分のプロフィールに表示されない**
-Discordの仕様で、RPCのボタンは自分自身からは見えません。別アカウントか他の人に確認してもらってください。
+**The buttons don't show up on my own profile**
+This is a Discord limitation — RPC buttons aren't visible to yourself. Have another account or another person check.
 
-**アルバムアートが出ない曲がある**
-アートワークとリンクはiTunes Search API（Apple Musicカタログ）で解決しています。ローカル取り込み曲やカタログに存在しない曲はアートなし・ボタンはリポジトリURLにフォールバックします。feat.表記や「- Single」などの表記揺れは吸収しますが、macOSの「言語と地域」の地域とApple Musicのストアフロント（国）が違う場合も、その国のカタログに曲がなく解決できないことがあります。
+**Some tracks don't show album art**
+Artwork and links are resolved via the iTunes Search API (the Apple Music catalog). Locally imported tracks or tracks not in the catalog will have no artwork, and buttons fall back to the repository URL. Variations in notation like "feat." or "- Single" are normalized, but if your macOS "Language & Region" region differs from your Apple Music storefront (country), the track may not exist in that country's catalog and fail to resolve.
 
-**Discordを後から起動した**
-自動で検知して接続します（Musicが再生中なら数秒でステータスが出ます）。出ない場合はメニューの「Reconnect to Discord」。
+**I launched Discord afterward**
+It's detected automatically and connects (if Music is playing, the status appears within a few seconds). If it doesn't, use "Reconnect to Discord" from the menu.
 
 ---
 
-## 開発
+## Development
 
-ここから先はソースからビルドする人・コントリビュートする人向け。
+The rest of this document is for people building from source or contributing.
 
-設計の詳細は [DESIGN.md](DESIGN.md) を参照。
+See [DESIGN.md](DESIGN.md) for design details.
 
-### ビルド
+### Build
 
-Xcode Command Line Tools（Swift 5.9+）が必要。
+Requires Xcode Command Line Tools (Swift 5.9+).
 
 ```sh
 ./make-app.sh
 mv Ceyrad.app /Applications/
 ```
 
-`.app` にするとオートメーション権限がアプリ自体に紐づき（ターミナル起動時の権限問題が起きない）、システム設定の「ログイン項目」にも登録できる。
+Building as a `.app` ties the Automation permission to the app itself (avoiding permission issues tied to the launching terminal), and lets it be registered in "Login Items" in System Settings.
 
-素の実行ファイルだけ欲しい場合は `swift build -c release`（`.build/release/Ceyrad`）。ログイン時の自動起動をLaunchAgentで行う場合は以下のようなplistを `~/Library/LaunchAgents/local.ceyrad.plist` に作成する。
+If you just want a plain executable, use `swift build -c release` (`.build/release/Ceyrad`). To auto-launch at login via a LaunchAgent, create a plist like the following at `~/Library/LaunchAgents/local.ceyrad.plist`.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -103,15 +107,15 @@ launchctl load ~/Library/LaunchAgents/local.ceyrad.plist
 
 ### Discord Application ID
 
-Discordに接続するためのApplication ID（`SettingsStore.discordClientId`）はこのアプリ専用のものを [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) に固定で埋め込んである。フォークして自分用に使う場合は、[Discord Developer Portal](https://discord.com/developers/applications) で自分のApplicationを作り、名前を **Apple Music** にした上で（この名前がステータスの「Apple Music を再生中」に使われる）そのApplication IDに書き換える。
+The Application ID used to connect to Discord (`SettingsStore.discordClientId`) is hardcoded in [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) and is dedicated to this app. If you fork this for your own use, create your own Application in the [Discord Developer Portal](https://discord.com/developers/applications), name it **Apple Music** (this name is used in the "Listening to Apple Music" status text), and replace it with that Application ID.
 
-### テスト
+### Tests
 
 ```sh
 swift test
 ```
 
-ActivityBuilderのペイロード生成、iTunes検索のマッチング、AppleScript出力のパースなど、純粋なロジックを`Tests/CeyradTests`でカバーしている。
+`Tests/CeyradTests` covers pure logic such as ActivityBuilder payload generation, iTunes search matching, and AppleScript output parsing.
 
 ### Lint
 
@@ -120,46 +124,46 @@ ActivityBuilderのペイロード生成、iTunes検索のマッチング、Apple
 ./scripts/lint.sh --fix    # swift-format format -i + swiftlint --fix
 ```
 
-[SwiftLint](https://github.com/realm/SwiftLint)（`.swiftlint.yml`）と[swift-format](https://github.com/swiftlang/swift-format)（`.swift-format`、Swiftツールチェーン同梱の`swift format`コマンドを使用）で構成。PR・pushのたびに [`ci.yml`](.github/workflows/ci.yml) がlint・テスト・ビルドを実行する。
+Configured with [SwiftLint](https://github.com/realm/SwiftLint) (`.swiftlint.yml`) and [swift-format](https://github.com/swiftlang/swift-format) (`.swift-format`, using the `swift format` command bundled with the Swift toolchain). [`ci.yml`](.github/workflows/ci.yml) runs lint, tests, and build on every PR and push.
 
-### 自動更新（Sparkle）
+### Auto-update (Sparkle)
 
-[Sparkle](https://sparkle-project.org/)でアプリ内から更新を確認できる（メニューの「Check for Updates…」、または`SUEnableAutomaticChecks`により1日1回のバックグラウンドチェック）。
+[Sparkle](https://sparkle-project.org/) lets you check for updates from within the app ("Check for Updates…" in the menu, or a once-a-day background check via `SUEnableAutomaticChecks`).
 
-- 更新情報は [`appcast.xml`](appcast.xml) から取得する（`main`ブランチをraw.githubusercontent.com経由で参照）
-- 配布物自体はEdDSA署名で検証する（コード署名はad-hocのため、こちらが実質的な改ざん検知の要）
+- Update info is fetched from [`appcast.xml`](appcast.xml) (referenced on the `main` branch via raw.githubusercontent.com)
+- The distributed artifact itself is verified with an EdDSA signature (since code signing is ad-hoc, this is the actual tamper-detection mechanism)
 
-#### メンテナ向け: 署名鍵のセットアップ（初回のみ）
+#### For maintainers: setting up the signing key (one-time)
 
-新しいバージョンをリリースするたびに`appcast.xml`へ自動反映させるには、EdDSA署名鍵をGitHub Actionsのシークレットに登録する必要がある。
+To have `appcast.xml` automatically updated on every new release, you need to register the EdDSA signing key as a GitHub Actions secret.
 
-1. Sparkleのリリース（[Sparkle-*.tar.xz](https://github.com/sparkle-project/Sparkle/releases)、または`swift package resolve`後の`.build/artifacts/sparkle/Sparkle/bin/`）にある`generate_keys`を実行する
+1. Run `generate_keys` from a Sparkle release ([Sparkle-*.tar.xz](https://github.com/sparkle-project/Sparkle/releases), or `.build/artifacts/sparkle/Sparkle/bin/` after `swift package resolve`)
 
    ```sh
    ./generate_keys
    ```
 
-   鍵はmacOSキーチェーンに保存され、公開鍵が表示される。**この公開鍵は既に`Support/Info.plist`の`SUPublicEDKey`に設定済み**（このセットアップを行った時点のもの）。もし鍵を作り直した場合はここを更新すること。
+   The key is stored in the macOS Keychain, and the public key is printed. **This public key is already set in `Support/Info.plist`'s `SUPublicEDKey`** (as of when this setup was done). If you regenerate the key, update it there too.
 
-2. 秘密鍵をエクスポートする（ファイルの中身は絶対にコミットしない）
+2. Export the private key (never commit the contents of this file)
 
    ```sh
    ./generate_keys -x /tmp/sparkle_private_key.txt
    ```
 
-3. GitHubリポジトリの **Settings > Secrets and variables > Actions** で `SPARKLE_PRIVATE_KEY` という名前のシークレットを作り、上記ファイルの中身を貼り付ける。登録が終わったら `/tmp/sparkle_private_key.txt` は削除する。
+3. In the GitHub repository, go to **Settings > Secrets and variables > Actions** and create a secret named `SPARKLE_PRIVATE_KEY`, pasting in the contents of the file above. Once registered, delete `/tmp/sparkle_private_key.txt`.
 
-シークレット未設定の場合、リリースワークフローは通常通りzip/dmgを公開するだけで、`appcast.xml`の更新はスキップされる（アプリは起動するが自動更新は機能しない）。
+If the secret isn't set, the release workflow will just publish the zip/dmg as usual, skipping the `appcast.xml` update (the app still runs, but auto-update won't work).
 
-### リリース
+### Release
 
-`v*.*.*` 形式のタグをpushすると、GitHub Actions（`.github/workflows/release.yml`）が自動でビルドし、`Ceyrad.app` をzipにしてGitHub Releaseへ添付する。
+Pushing a tag in the form `v*.*.*` triggers GitHub Actions (`.github/workflows/release.yml`) to build automatically, zip `Ceyrad.app`, and attach it to a GitHub Release.
 
 ```sh
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-配布されるzipはad-hoc署名（Apple Developer証明書での署名・notarizeなし）のため、ダウンロードして初回起動する際はGatekeeperに「開発元を確認できません」と表示される。その場合はFinderでアプリを右クリック→「開く」から起動するか、`xattr -cr Ceyrad.app` でquarantine属性を外す。
+Since the distributed zip is ad-hoc signed (no Apple Developer certificate signing or notarization), Gatekeeper will show "cannot verify developer" on first launch after downloading. In that case, right-click the app in Finder and choose "Open", or remove the quarantine attribute with `xattr -cr Ceyrad.app`.
 
-タグを打つと`Support/Info.plist`の`CFBundleShortVersionString`/`CFBundleVersion`がタグのバージョン（例: `v1.2.0` → `1.2.0`）に自動で書き換えられてからビルドされる。`SUPublicEDKey`が設定済みで`SPARKLE_PRIVATE_KEY`シークレットが登録されていれば、更新用zipの署名と[appcast.xml](#自動更新sparkle)への追記・pushも同じワークフローで行われる。
+When you push a tag, `Support/Info.plist`'s `CFBundleShortVersionString`/`CFBundleVersion` are automatically rewritten to the tag's version (e.g. `v1.2.0` → `1.2.0`) before building. If `SUPublicEDKey` is set and the `SPARKLE_PRIVATE_KEY` secret is registered, signing the update zip and appending/pushing to [appcast.xml](#auto-update-sparkle) also happens in the same workflow.
