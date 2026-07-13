@@ -25,14 +25,23 @@ enum LinkType: String, CaseIterable {
     }
 
     /// リンク先に応じたボタンラベルの既定値。ユーザーが手動でラベルを変更するまではこれに追従する。
-    var defaultLabel: String {
+    /// 曲ページのみ再生中のソースに応じて変わる（nil＝表示用の既定はApple Music）。
+    func defaultLabel(for source: MusicSourceID?) -> String {
         switch self {
-        case .song: return "Play on Apple Music"
+        case .song: return source == .spotify ? "Play on Spotify" : "Play on Apple Music"
         case .artist: return "View Artist"
         case .album: return "View Album"
         case .custom: return "Open Link"
         case .repository: return "About This App"
         case .disabled: return ""
+        }
+    }
+
+    /// このリンク先の既定ラベルとして扱う文字列すべて。「未カスタマイズか」の判定に使う。
+    var defaultLabels: [String] {
+        switch self {
+        case .song: return ["Play on Apple Music", "Play on Spotify"]
+        default: return [defaultLabel(for: nil)]
         }
     }
 }
@@ -46,7 +55,8 @@ enum BadgeLabelType: Int, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .appName: return t("App Name (Apple Music)", "アプリ名（Apple Music）")
+        // Discord側の名前は接続中のクライアント（Apple Music / Spotify）に依存する
+        case .appName: return t("App Name", "アプリ名")
         case .artist: return t("Artist Name", "アーティスト名")
         case .track: return t("Track Name", "曲名")
         }
@@ -56,8 +66,11 @@ enum BadgeLabelType: Int, CaseIterable {
 final class SettingsStore {
     static let shared = SettingsStore()
     static let defaultRepositoryURL = "https://github.com/Narcissus-tazetta/Ceyrad"
-    /// このアプリ専用のDiscord Application ID。ユーザーが変更する必要はないため固定値とする。
+    /// このアプリ専用のDiscord Application ID（Application名: "Apple Music"）。
+    /// ユーザーが変更する必要はないため固定値とする。
     static let discordClientId = "1525381518258606130"
+    /// Spotify再生時に使うDiscord Application ID（Application名: "Spotify"）。
+    static let spotifyDiscordClientId = "1526238417845751959"
 
     private let defaults: UserDefaults
 
@@ -71,9 +84,14 @@ final class SettingsStore {
         set { setType(newValue, typeKey: "button1Type", labelKey: "button1Label", old: button1Type) }
     }
 
+    /// メニュー表示用（既定はApple Music表記）。Discordへ送る実ラベルは`button1Label(for:)`。
     var button1Label: String {
-        get { defaults.string(forKey: "button1Label") ?? button1Type.defaultLabel }
+        get { button1Label(for: nil) }
         set { setLabel(newValue, labelKey: "button1Label", type: button1Type) }
+    }
+
+    func button1Label(for source: MusicSourceID?) -> String {
+        defaults.string(forKey: "button1Label") ?? button1Type.defaultLabel(for: source)
     }
 
     var button2Type: LinkType {
@@ -81,14 +99,19 @@ final class SettingsStore {
         set { setType(newValue, typeKey: "button2Type", labelKey: "button2Label", old: button2Type) }
     }
 
+    /// メニュー表示用（既定はApple Music表記）。Discordへ送る実ラベルは`button2Label(for:)`。
     var button2Label: String {
-        get { defaults.string(forKey: "button2Label") ?? button2Type.defaultLabel }
+        get { button2Label(for: nil) }
         set { setLabel(newValue, labelKey: "button2Label", type: button2Type) }
+    }
+
+    func button2Label(for source: MusicSourceID?) -> String {
+        defaults.string(forKey: "button2Label") ?? button2Type.defaultLabel(for: source)
     }
 
     /// ラベルが未カスタマイズ（＝旧リンク先の既定値のまま）なら、リンク先変更時にラベルも追従させる
     private func setType(_ newValue: LinkType, typeKey: String, labelKey: String, old: LinkType) {
-        if defaults.string(forKey: labelKey) == old.defaultLabel {
+        if let stored = defaults.string(forKey: labelKey), old.defaultLabels.contains(stored) {
             defaults.removeObject(forKey: labelKey)
         }
         defaults.set(newValue.rawValue, forKey: typeKey)
@@ -97,10 +120,28 @@ final class SettingsStore {
     /// 既定値と同じ・空文字ならカスタムラベル扱いにせず削除し、以後もリンク先に追従させる
     private func setLabel(_ newValue: String, labelKey: String, type: LinkType) {
         let value = String(newValue.prefix(32))
-        if value.isEmpty || value == type.defaultLabel {
+        if value.isEmpty || type.defaultLabels.contains(value) {
             defaults.removeObject(forKey: labelKey)
         } else {
             defaults.set(value, forKey: labelKey)
+        }
+    }
+
+    // MARK: - Music sources
+
+    /// ソース別の有効/無効。無効にしたソースは起動していても監視しない。
+    func isSourceEnabled(_ source: MusicSourceID) -> Bool {
+        defaults.object(forKey: Self.sourceKey(source)) as? Bool ?? true
+    }
+
+    func setSourceEnabled(_ source: MusicSourceID, _ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.sourceKey(source))
+    }
+
+    private static func sourceKey(_ source: MusicSourceID) -> String {
+        switch source {
+        case .appleMusic: return "sourceAppleMusicEnabled"
+        case .spotify: return "sourceSpotifyEnabled"
         }
     }
 

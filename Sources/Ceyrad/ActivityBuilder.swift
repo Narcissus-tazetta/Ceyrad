@@ -3,7 +3,8 @@ import Foundation
 enum ActivityBuilder {
     static func build(
         track: TrackInfo, playerState: PlayerState,
-        catalog: CatalogInfo?, settings: SettingsStore
+        catalog: CatalogInfo?, settings: SettingsStore,
+        source: MusicSourceID = .appleMusic
     ) -> [String: Any] {
         // type 2 = Listening（「〜を再生中」表示）
         var activity: [String: Any] = ["type": 2]
@@ -62,7 +63,7 @@ enum ActivityBuilder {
             ]
         }
 
-        let buttons = buildButtons(catalog: catalog, settings: settings)
+        let buttons = buildButtons(catalog: catalog, settings: settings, source: source)
         if !buttons.isEmpty {
             activity["buttons"] = buttons
         }
@@ -71,13 +72,14 @@ enum ActivityBuilder {
 
     /// Discord RPC仕様: ボタンは最大2個、label<=32文字、url<=512文字
     private static func buildButtons(
-        catalog: CatalogInfo?, settings: SettingsStore
+        catalog: CatalogInfo?, settings: SettingsStore, source: MusicSourceID
     ) -> [[String: String]] {
         var buttons: [[String: String]] = []
         var usedURLs = Set<String>()
+        // 未カスタマイズのラベルは再生中のソースに追従する（"Play on Spotify" 等）
         let configs: [(LinkType, String)] = [
-            (settings.button1Type, settings.button1Label),
-            (settings.button2Type, settings.button2Label),
+            (settings.button1Type, settings.button1Label(for: source)),
+            (settings.button2Type, settings.button2Label(for: source)),
         ]
         for (type, label) in configs {
             guard type != .disabled,

@@ -6,22 +6,41 @@ enum PlayerState {
     case stopped
 }
 
+/// 対応する音楽プレイヤー。宣言的な差分はMusicSourceDescriptor、
+/// 振る舞いの差分（位置補完・カタログ解決）はAppDelegateのswitchに置く。
+enum MusicSourceID: CaseIterable {
+    case appleMusic
+    case spotify
+}
+
 struct TrackInfo: Equatable {
     var name: String
     var artist: String
     var album: String
     var durationSec: Double?
     var positionSec: Double?
+    /// Spotifyの"spotify:track:xxx"。Apple Musicはnil。
+    var trackId: String?
 
     var identity: String {
-        "\(name)\u{1F}\(artist)\u{1F}\(album)"
+        trackId ?? "\(name)\u{1F}\(artist)\u{1F}\(album)"
     }
 }
 
-/// iTunes Search APIで解決したカタログ情報
+/// カタログ情報（Apple Music: iTunes Search API / Spotify: Track ID + artwork url）
 struct CatalogInfo {
     var songURL: String?
     var artistURL: String?
     var albumURL: String?
     var artworkURL: String?
+
+    init(
+        songURL: String? = nil, artistURL: String? = nil,
+        albumURL: String? = nil, artworkURL: String? = nil
+    ) {
+        self.songURL = songURL
+        self.artistURL = artistURL
+        self.albumURL = albumURL
+        self.artworkURL = artworkURL
+    }
 }

@@ -2,11 +2,12 @@
 
 [日本語版はこちら](README.ja.md)
 
-A macOS menu bar app that shows the track currently playing in Apple Music as your Discord status (Rich Presence).
+A macOS menu bar app that shows the track currently playing in Apple Music or Spotify as your Discord status (Rich Presence).
 
 - Shows title, artist, album art, and a playback progress bar as "Listening to ~"
 - Up to 2 buttons (song / artist / album page, custom URL, repository)
-- **Does nothing when Apple Music isn't running** (no polling — fully event-driven)
+- Supports Apple Music and Spotify; if both are open, whichever is actually playing is shown
+- **Does nothing when neither player is running** (no polling — fully event-driven)
 
 ## Requirements
 
@@ -24,9 +25,9 @@ A macOS menu bar app that shows the track currently playing in Apple Music as yo
 
 ## Usage
 
-1. Play a track in Apple Music
-2. On first use, macOS will ask "Allow Ceyrad to control Apple Music?" — **Allow** it
-   (used to get the playback position; if denied, the app still works but the progress bar won't show)
+1. Play a track in Apple Music or Spotify
+2. On first use, macOS will ask "Allow Ceyrad to control Apple Music?" (and separately for Spotify) — **Allow** it
+   (used to get the playback position and artwork not included in notifications; if denied, the app still works with reduced info)
 3. If Discord is already running, your status updates within a few seconds. If you launch Discord afterward, it's detected automatically and connects
 
 ## Menu bar settings
@@ -36,7 +37,8 @@ A macOS menu bar app that shows the track currently playing in Apple Music as yo
 | Button 1 / Button 2 | Link target: song page / artist page / album page / custom URL / repository / disabled. "Change Label…" also lets you edit the button's display text (up to 32 characters) |
 | Set Custom URL… | The URL used when a button's link target is "custom URL" |
 | Set Repository URL… | The repository button's target, and the fallback used when URL resolution fails |
-| Status Badge | What the compact "Listening to …" badge (member list, DM sidebar, etc.) shows: app name (Apple Music) / artist name / track name (default: artist name) |
+| Music Sources | Which players to watch: Apple Music / Spotify (both enabled by default). If both are playing, the one with the most recent activity is shown; a paused player yields to a playing one |
+| Status Badge | What the compact "Listening to …" badge (member list, DM sidebar, etc.) shows: app name / artist name / track name (default: artist name) |
 | When Paused | Behavior on pause: keep showing / clear immediately / clear after 1, 3, 5, or 10 minutes (default: 5 minutes) |
 | Launch at Login | Automatically start Ceyrad at login (click to toggle on/off) |
 | Language | Switches the display language of the menu (this settings UI) between English / 日本語. Text shown on the Discord side (connection status, button labels, etc.) is not affected and always stays in English |
@@ -60,7 +62,13 @@ This is a Discord limitation — RPC buttons aren't visible to yourself. Have an
 Artwork and links are resolved via the iTunes Search API (the Apple Music catalog). Locally imported tracks or tracks not in the catalog will have no artwork, and buttons fall back to the repository URL. Variations in notation like "feat." or "- Single" are normalized, but if your macOS "Language & Region" region differs from your Apple Music storefront (country), the track may not exist in that country's catalog and fail to resolve.
 
 **I launched Discord afterward**
-It's detected automatically and connects (if Music is playing, the status appears within a few seconds). If it doesn't, use "Reconnect to Discord" from the menu.
+It's detected automatically and connects (if a player is running, the status appears within a few seconds). If it doesn't, use "Reconnect to Discord" from the menu.
+
+**My Spotify status shows up twice**
+If you have linked Spotify in Discord's own settings (Connections > Spotify with "Display Spotify as your status" on), Discord shows its own presence in addition to Ceyrad's. Turn one of them off — either Discord's built-in display or Ceyrad's Spotify source in "Music Sources".
+
+**Spotify ads / local files look odd**
+Spotify ads and locally imported files are shown as regular tracks but without artwork, and buttons fall back to the repository URL.
 
 ---
 
@@ -108,7 +116,7 @@ launchctl load ~/Library/LaunchAgents/local.ceyrad.plist
 
 ### Discord Application ID
 
-The Application ID used to connect to Discord (`SettingsStore.discordClientId`) is hardcoded in [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) and is dedicated to this app. If you fork this for your own use, create your own Application in the [Discord Developer Portal](https://discord.com/developers/applications), name it **Apple Music** (this name is used in the "Listening to Apple Music" status text), and replace it with that Application ID.
+The Application IDs used to connect to Discord are hardcoded in [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) and are dedicated to this app. The Application *name* is what Discord shows as "Listening to ~", so there is one Application per source: `SettingsStore.discordClientId` (named **Apple Music**) and `SettingsStore.spotifyDiscordClientId` (named **Spotify**; Ceyrad reconnects with this ID when the active source switches). If you fork this for your own use, create your own Applications in the [Discord Developer Portal](https://discord.com/developers/applications) with those names and replace the IDs.
 
 ### Tests
 

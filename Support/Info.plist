@@ -19,7 +19,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>再生位置など、通知に含まれない再生情報を取得するためにApple Musicへアクセスします。</string>
+	<string>再生位置やアートワークなど、通知に含まれない再生情報を取得するためにApple MusicおよびSpotifyへアクセスします。</string>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/Narcissus-tazetta/Ceyrad/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>

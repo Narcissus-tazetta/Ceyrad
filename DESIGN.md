@@ -192,3 +192,34 @@ v1からの主な変更点:
 2. **ボタンは自分では見えない**（Discord仕様）。確認は別アカウントか他人のプロフィールで
 3. iTunes Search APIのマッチングは一致ベースのため、表記揺れが大きい曲は解決できないことがある（feat.表記差・「- Single」サフィックスは正規化で吸収済み）→ 残りはフォールバックで吸収
 4. ステータスに出す名称（"Apple Music" など）はDiscord Developer Portalで作るApplicationの名前で決まる
+
+---
+
+## 8. マルチソース対応（v3: Spotify）
+
+v2のApple Musicハードコードを、性能モデル（イベント駆動・ポーリングなし・非稼働時コストゼロ）を保ったまま2ソース化した。
+
+### 設計
+
+- **プロトコルではなくenum + ディスクリプタ + 純粋関数**。`MusicSourceID`（`.appleMusic` / `.spotify`）と `MusicSourceDescriptor`（bundle ID・通知名・Discord client ID・表示名・userInfoパーサ）に宣言的な差分を寄せ、振る舞いの差分（位置補完・カタログ解決）は `AppDelegate` の `switch source` に置く。
+- **通知**: Spotifyは `com.spotify.client.PlaybackStateChanged`。userInfoに `Playback Position`（秒）と `Track ID` が含まれるため、**Apple Musicで必要なAppleScript位置補完がSpotifyでは不要**（`Duration` はミリ秒な点に注意）。
+- **カタログ**: Spotifyは `SpotifyCatalogClient`。曲URLは `Track ID` から純粋関数で生成（I/Oゼロ）。アートワークはAppleScript `artwork url`（CDN直リンク、ネットワーク不要）→ 失敗時のみoEmbed APIフォールバック。iTunes Search API（Apple Music用）は不変。
+- **AppleScript**: `SpotifyAppleScript` は初期状態取得とartwork url取得のみ。キューは `MusicAppleScript` と別（片方のプレイヤーのハングがもう片方をブロックしない）。オートメーション権限はアプリごとに別prompt。
+
+### アクティブソース選択（SourceSelector、純粋関数）
+
+1. 候補 = 稼働中 && 曲あり && 停止中でない
+2. 片方だけ再生中ならそれが勝つ（一時停止側は再生側に譲る）
+3. 両方再生中なら直近イベント側（単調時計 `lastEventUptimeNs`）
+4. どちらも再生中でなければ表示中ソースを維持（両方一時停止でのフリップ防止）
+
+### client ID切替
+
+「〜を再生中」の名称はApplication名で決まるため、ソースごとにDiscord Applicationを持つ（`discordClientId`＝Apple Music / `spotifyDiscordClientId`＝Spotify）。表示ソースが切り替わったら、ペンディング送信をキャンセル→ activityクリア→ 切断→ `pendingClientSwitch` フラグでバックオフなしに新IDで即再ハンドシェイク。切替はユーザーの再生操作起点のみで低頻度。
+
+### 性能の不変条件（v2から維持）
+
+- 両プレイヤー非稼働時: DNC購読0・ソケットなし・タイマーなし（NSWorkspace監視のみ）
+- ソース別teardown: 片方の終了はそのオブザーバと状態のみ解放。最後の1つで完全休止
+- Debouncerは共有1個（activityは常に1つ）。ソース切替時に必ずcancel
+- SpotifyのAppleScript呼び出し回数はApple Musicより少ない（位置補完なし・artworkは曲替わり時のみ+LRU）

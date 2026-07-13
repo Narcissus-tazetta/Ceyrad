@@ -45,6 +45,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(actionItem(t("Set Custom URL…", "カスタムURLを設定…"), #selector(editCustomURL)))
         menu.addItem(actionItem(t("Set Repository URL…", "リポジトリURLを設定…"), #selector(editRepositoryURL)))
+        menu.addItem(musicSourcesItem())
         menu.addItem(badgeLabelItem())
         menu.addItem(pauseBehaviorItem())
         menu.addItem(languageItem())
@@ -105,6 +106,35 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         )
         submenu.addItem(labelItem)
 
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Submenu builders
+
+extension MenuBarController {
+    /// 監視対象のプレイヤーを選ぶサブメニュー付き項目
+    fileprivate func musicSourcesItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: t("Music Sources", "ミュージックソース"),
+            action: nil, keyEquivalent: ""
+        )
+        let submenu = NSMenu()
+        for source in MusicSourceID.allCases {
+            let sub = NSMenuItem(
+                title: MusicSourceDescriptor.descriptor(for: source).displayName,
+                action: #selector(toggleSource(_:)), keyEquivalent: ""
+            )
+            sub.target = self
+            sub.representedObject = source
+            sub.state = settings.isSourceEnabled(source) ? .on : .off
+            submenu.addItem(sub)
+        }
         item.submenu = submenu
         return item
     }
@@ -280,6 +310,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         onSettingsChanged?()
     }
 
+    @objc private func toggleSource(_ sender: NSMenuItem) {
+        guard let source = sender.representedObject as? MusicSourceID else { return }
+        settings.setSourceEnabled(source, !settings.isSourceEnabled(source))
+        onSettingsChanged?()
+    }
+
     @objc private func selectBadgeLabel(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? Int,
             let type = BadgeLabelType(rawValue: raw)
@@ -333,40 +369,4 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         onCheckForUpdates?()
     }
 
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
-
-}
-
-// MARK: - Dialogs
-
-extension MenuBarController {
-    fileprivate func prompt(
-        title: String, message: String,
-        current: String, placeholder: String = ""
-    ) -> String? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        field.stringValue = current
-        field.placeholderString = placeholder
-        alert.accessoryView = field
-        alert.addButton(withTitle: t("OK", "OK"))
-        alert.addButton(withTitle: t("Cancel", "キャンセル"))
-        alert.window.initialFirstResponder = field
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    fileprivate func showError(_ message: String) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = t("Invalid Input", "入力が無効です")
-        alert.informativeText = message
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
-    }
 }
