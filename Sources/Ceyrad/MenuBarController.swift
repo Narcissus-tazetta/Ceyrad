@@ -337,9 +337,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Dialogs
+}
 
-    private func prompt(
+// MARK: - Dialogs
+
+extension MenuBarController {
+    fileprivate func prompt(
         title: String, message: String,
         current: String, placeholder: String = ""
     ) -> String? {
@@ -358,7 +361,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func showError(_ message: String) {
+    fileprivate func showError(_ message: String) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = t("Invalid Input", "入力が無効です")

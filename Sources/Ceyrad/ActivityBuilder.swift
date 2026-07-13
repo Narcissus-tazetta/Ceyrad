@@ -62,7 +62,17 @@ enum ActivityBuilder {
             ]
         }
 
-        // Discord RPC仕様: ボタンは最大2個、label<=32文字、url<=512文字
+        let buttons = buildButtons(catalog: catalog, settings: settings)
+        if !buttons.isEmpty {
+            activity["buttons"] = buttons
+        }
+        return activity
+    }
+
+    /// Discord RPC仕様: ボタンは最大2個、label<=32文字、url<=512文字
+    private static func buildButtons(
+        catalog: CatalogInfo?, settings: SettingsStore
+    ) -> [[String: String]] {
         var buttons: [[String: String]] = []
         var usedURLs = Set<String>()
         let configs: [(LinkType, String)] = [
@@ -81,10 +91,7 @@ enum ActivityBuilder {
             ])
             usedURLs.insert(url)
         }
-        if !buttons.isEmpty {
-            activity["buttons"] = buttons
-        }
-        return activity
+        return buttons
     }
 
     /// Catalog URLが解決できなかった場合（ローカル取り込み曲など）はリポジトリURLへフォールバック

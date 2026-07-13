@@ -130,18 +130,33 @@ final class ITunesSearchClient {
         let a = norm(artist)
         let al = norm(stripAlbumSuffix(album))
         let ns = norm(stripFeaturing(name))
-        let tiers: [(SearchResult) -> Bool] = [
-            {
-                norm($0.trackName) == n && norm($0.artistName) == a
-                    && norm(stripAlbumSuffix($0.collectionName ?? "")) == al
-            },
-            { norm($0.trackName) == n && norm($0.artistName) == a },
-            { norm(stripFeaturing($0.trackName ?? "")) == ns && norm($0.artistName) == a },
-            { norm($0.trackName) == n },
-            { norm(stripFeaturing($0.trackName ?? "")) == ns },
+        struct Candidate {
+            let result: SearchResult
+            let track: String
+            let trackNoFeat: String
+            let artist: String
+            let album: String
+        }
+        // 正規化はUnicode折りたたみと正規表現を伴い軽くないため、
+        // ティアごとに繰り返さず結果1件につき1回で済ませる
+        let candidates = results.map { r in
+            Candidate(
+                result: r,
+                track: norm(r.trackName),
+                trackNoFeat: norm(stripFeaturing(r.trackName ?? "")),
+                artist: norm(r.artistName),
+                album: norm(stripAlbumSuffix(r.collectionName ?? ""))
+            )
+        }
+        let tiers: [(Candidate) -> Bool] = [
+            { $0.track == n && $0.artist == a && $0.album == al },
+            { $0.track == n && $0.artist == a },
+            { $0.trackNoFeat == ns && $0.artist == a },
+            { $0.track == n },
+            { $0.trackNoFeat == ns },
         ]
         for tier in tiers {
-            if let r = results.first(where: tier) { return r }
+            if let c = candidates.first(where: tier) { return c.result }
         }
         return nil
     }

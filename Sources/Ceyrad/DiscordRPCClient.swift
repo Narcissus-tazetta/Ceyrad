@@ -22,6 +22,8 @@ final class DiscordRPCClient {
     private var fd: Int32 = -1
     private var readSource: DispatchSourceRead?
     private var recvBuffer = Data()
+    /// read(2)用の作業バッファ。読み込みのたびに64KBをゼロ埋め確保しないよう使い回す。
+    private var readScratch = [UInt8](repeating: 0, count: 65536)
 
     // MARK: - Public API (main thread)
 
@@ -124,25 +126,34 @@ final class DiscordRPCClient {
 
     private func readAvailable() {
         guard fd >= 0 else { return }
-        var buf = [UInt8](repeating: 0, count: 65536)
-        let n = read(fd, &buf, buf.count)
+        let n = readScratch.withUnsafeMutableBytes { raw in
+            read(fd, raw.baseAddress, raw.count)
+        }
         guard n > 0 else {
             teardown()
             return
         }
-        recvBuffer.append(contentsOf: buf[0..<n])
-        while recvBuffer.count >= 8 {
-            let op = leUInt32(at: 0)
-            let length = Int(leUInt32(at: 4))
+        recvBuffer.append(contentsOf: readScratch[0..<n])
+        // フレームごとに先頭を削る（O(n)のシフト）のではなく、
+        // オフセットで走査して消費分の削除は最後に1回で済ませる
+        var consumed = 0
+        while recvBuffer.count - consumed >= 8 {
+            let op = leUInt32(at: consumed)
+            let length = Int(leUInt32(at: consumed + 4))
             guard length < 1_000_000 else {
                 teardown()
                 return
             }
             let total = 8 + length
-            guard recvBuffer.count >= total else { break }
-            let payload = recvBuffer.subdata(in: 8..<total)
-            recvBuffer.removeSubrange(0..<total)
+            guard recvBuffer.count - consumed >= total else { break }
+            let payload = recvBuffer.subdata(in: (consumed + 8)..<(consumed + total))
+            consumed += total
             handleFrame(op: op, payload: payload)
+            // handleFrame内でteardownされた場合、recvBufferは既に空
+            guard fd >= 0 else { return }
+        }
+        if consumed > 0 {
+            recvBuffer.removeSubrange(0..<consumed)
         }
     }
 
