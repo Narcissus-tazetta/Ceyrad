@@ -37,6 +37,22 @@ enum LinkType: String, CaseIterable {
     }
 }
 
+/// メンバーリスト等に出る簡易バッジ「〜を再生中」に何を表示するか。
+/// rawValueはDiscordの`status_display_type`の値（0=name / 1=state / 2=details）に一致させる。
+enum BadgeLabelType: Int, CaseIterable {
+    case appName = 0
+    case artist = 1
+    case track = 2
+
+    var displayName: String {
+        switch self {
+        case .appName: return t("App Name (Apple Music)", "アプリ名（Apple Music）")
+        case .artist: return t("Artist Name", "アーティスト名")
+        case .track: return t("Track Name", "曲名")
+        }
+    }
+}
+
 final class SettingsStore {
     static let shared = SettingsStore()
     static let defaultRepositoryURL = "https://github.com/Narcissus-tazetta/Ceyrad"
@@ -96,6 +112,13 @@ final class SettingsStore {
     var repositoryURL: String {
         get { defaults.string(forKey: "repositoryURL") ?? Self.defaultRepositoryURL }
         set { defaults.set(newValue, forKey: "repositoryURL") }
+    }
+
+    /// バッジ表示（status_display_type）。integer(forKey:)は未設定時に0を返すため、
+    /// 既定値をartistにできるようobjectで取り出す。
+    var badgeLabel: BadgeLabelType {
+        get { BadgeLabelType(rawValue: defaults.object(forKey: "badgeLabel") as? Int ?? 1) ?? .artist }
+        set { defaults.set(newValue.rawValue, forKey: "badgeLabel") }
     }
 
     /// 一時停止が続いたときにステータスを消すまでの分数。

@@ -26,6 +26,9 @@ enum ActivityBuilder {
             pauseLabel = nil
         }
 
+        // バッジ（「〜を再生中」）の表示元フィールドを指定する
+        var badgeLabel = settings.badgeLabel
+
         if let artwork = catalog?.artworkURL {
             var assets: [String: Any] = ["large_image": artwork]
             // アルバム行の末尾に停止位置を続ける（例: 幻燈 · ⏸ Paused at 2:48）
@@ -40,7 +43,12 @@ enum ActivityBuilder {
         } else if let pauseLabel {
             // アートワークなしだとアルバム行自体が表示されないため、アーティスト行に載せる
             activity["state"] = clamp("\(pauseLabel) · \(artist)")
+            // ポーズ文字列入りのstateがバッジに出ると読みにくいため、アプリ名表示へ退避
+            if badgeLabel == .artist {
+                badgeLabel = .appName
+            }
         }
+        activity["status_display_type"] = badgeLabel.rawValue
 
         // プログレスバーは再生中のみ。positionは通知発火時にAppleScriptで補完済み。
         if playerState == .playing,

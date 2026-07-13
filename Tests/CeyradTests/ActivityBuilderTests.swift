@@ -120,6 +120,51 @@ final class ActivityBuilderTests: XCTestCase {
         XCTAssertEqual(activity["state"] as? String, "⏸ Paused · Artist")
     }
 
+    // MARK: - バッジ表示（status_display_type）
+
+    func testStatusDisplayTypeDefaultsToArtist() {
+        let activity = ActivityBuilder.build(
+            track: track(), playerState: .playing, catalog: nil, settings: settings
+        )
+        XCTAssertEqual(activity["status_display_type"] as? Int, BadgeLabelType.artist.rawValue)
+    }
+
+    func testStatusDisplayTypeFollowsSetting() {
+        settings.badgeLabel = .track
+        let activity = ActivityBuilder.build(
+            track: track(), playerState: .playing, catalog: nil, settings: settings
+        )
+        XCTAssertEqual(activity["status_display_type"] as? Int, BadgeLabelType.track.rawValue)
+
+        settings.badgeLabel = .appName
+        let activity2 = ActivityBuilder.build(
+            track: track(), playerState: .playing, catalog: nil, settings: settings
+        )
+        XCTAssertEqual(activity2["status_display_type"] as? Int, BadgeLabelType.appName.rawValue)
+    }
+
+    func testArtistBadgeFallsBackToAppNameWhenPauseLabelIsOnArtistLine() {
+        // アートワークなしの一時停止ではstateに「⏸ Paused…」が混ざるため、
+        // artist選択時のみバッジをアプリ名表示へ退避する
+        let paused = ActivityBuilder.build(
+            track: track(), playerState: .paused, catalog: nil, settings: settings
+        )
+        XCTAssertEqual(paused["status_display_type"] as? Int, BadgeLabelType.appName.rawValue)
+
+        // アートワークありならstateは汚れないので退避しない
+        let pausedWithArt = ActivityBuilder.build(
+            track: track(), playerState: .paused, catalog: catalog(), settings: settings
+        )
+        XCTAssertEqual(pausedWithArt["status_display_type"] as? Int, BadgeLabelType.artist.rawValue)
+
+        // track選択時はdetails（曲名）を見るため退避しない
+        settings.badgeLabel = .track
+        let pausedTrack = ActivityBuilder.build(
+            track: track(), playerState: .paused, catalog: nil, settings: settings
+        )
+        XCTAssertEqual(pausedTrack["status_display_type"] as? Int, BadgeLabelType.track.rawValue)
+    }
+
     // MARK: - ボタン
 
     func testDuplicateButtonURLsAreDeduplicated() {

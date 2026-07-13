@@ -36,6 +36,7 @@ A macOS menu bar app that shows the track currently playing in Apple Music as yo
 | Button 1 / Button 2 | Link target: song page / artist page / album page / custom URL / repository / disabled. "Change Label…" also lets you edit the button's display text (up to 32 characters) |
 | Set Custom URL… | The URL used when a button's link target is "custom URL" |
 | Set Repository URL… | The repository button's target, and the fallback used when URL resolution fails |
+| Status Badge | What the compact "Listening to …" badge (member list, DM sidebar, etc.) shows: app name (Apple Music) / artist name / track name (default: artist name) |
 | When Paused | Behavior on pause: keep showing / clear immediately / clear after 1, 3, 5, or 10 minutes (default: 5 minutes) |
 | Launch at Login | Automatically start Ceyrad at login (click to toggle on/off) |
 | Language | Switches the display language of the menu (this settings UI) between English / 日本語. Text shown on the Discord side (connection status, button labels, etc.) is not affected and always stays in English |

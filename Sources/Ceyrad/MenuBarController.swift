@@ -45,6 +45,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(actionItem(t("Set Custom URL…", "カスタムURLを設定…"), #selector(editCustomURL)))
         menu.addItem(actionItem(t("Set Repository URL…", "リポジトリURLを設定…"), #selector(editRepositoryURL)))
+        menu.addItem(badgeLabelItem())
         menu.addItem(pauseBehaviorItem())
         menu.addItem(languageItem())
         menu.addItem(launchAtLoginItem())
@@ -104,6 +105,30 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         )
         submenu.addItem(labelItem)
 
+        item.submenu = submenu
+        return item
+    }
+
+    /// バッジ（「〜を再生中」）に何を表示するかを選ぶサブメニュー付き項目
+    private func badgeLabelItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: t(
+                "Status Badge: \(settings.badgeLabel.displayName)",
+                "ステータスバッジ: \(settings.badgeLabel.displayName)"
+            ),
+            action: nil, keyEquivalent: ""
+        )
+        let submenu = NSMenu()
+        for candidate in BadgeLabelType.allCases {
+            let sub = NSMenuItem(
+                title: candidate.displayName,
+                action: #selector(selectBadgeLabel(_:)), keyEquivalent: ""
+            )
+            sub.target = self
+            sub.representedObject = candidate.rawValue
+            sub.state = (candidate == settings.badgeLabel) ? .on : .off
+            submenu.addItem(sub)
+        }
         item.submenu = submenu
         return item
     }
@@ -252,6 +277,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             return
         }
         settings.repositoryURL = value
+        onSettingsChanged?()
+    }
+
+    @objc private func selectBadgeLabel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? Int,
+            let type = BadgeLabelType(rawValue: raw)
+        else { return }
+        settings.badgeLabel = type
         onSettingsChanged?()
     }
 
