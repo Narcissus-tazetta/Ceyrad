@@ -36,7 +36,7 @@ A macOS menu bar app that shows the track currently playing in Apple Music or Sp
 |---|---|
 | Button 1 / Button 2 | Link target: song page / artist page / album page / custom URL / repository / disabled. "Change Label…" also lets you edit the button's display text (up to 32 characters) |
 | Set Custom URL… | The URL used when a button's link target is "custom URL" |
-| Set Repository URL… | The repository button's target, and the fallback used when URL resolution fails |
+| Set Repository URL… | The repository button's target URL |
 | Music Sources | Which players to watch: Apple Music / Spotify (both enabled by default). If both are playing, the one with the most recent activity is shown; a paused player yields to a playing one |
 | Status Badge | What the compact "Listening to …" badge (member list, DM sidebar, etc.) shows: app name / artist name / track name (default: artist name) |
 | When Paused | Behavior on pause: keep showing / clear immediately / clear after 1, 3, 5, or 10 minutes (default: 5 minutes) |
@@ -59,7 +59,7 @@ Getting the current track info at launch requires Automation permission. Check "
 This is a Discord limitation — RPC buttons aren't visible to yourself. Have another account or another person check.
 
 **Some tracks don't show album art**
-Artwork and links are resolved via the iTunes Search API (the Apple Music catalog). Locally imported tracks or tracks not in the catalog will have no artwork, and buttons fall back to the repository URL. Variations in notation like "feat." or "- Single" are normalized, but if your macOS "Language & Region" region differs from your Apple Music storefront (country), the track may not exist in that country's catalog and fail to resolve.
+Artwork and links are resolved via the iTunes Search API (the Apple Music catalog). Locally imported tracks or tracks not in the catalog will have no artwork, and catalog-based buttons (song/artist/album) are hidden. Variations in notation like "feat." or "- Single" are normalized, but if your macOS "Language & Region" region differs from your Apple Music storefront (country), the track may not exist in that country's catalog and fail to resolve.
 
 **I launched Discord afterward**
 It's detected automatically and connects (if a player is running, the status appears within a few seconds). If it doesn't, use "Reconnect to Discord" from the menu.
@@ -68,7 +68,7 @@ It's detected automatically and connects (if a player is running, the status app
 If you have linked Spotify in Discord's own settings (Connections > Spotify with "Display Spotify as your status" on), Discord shows its own presence in addition to Ceyrad's. Turn one of them off — either Discord's built-in display or Ceyrad's Spotify source in "Music Sources".
 
 **Spotify ads / local files look odd**
-Spotify ads and locally imported files are shown as regular tracks but without artwork, and buttons fall back to the repository URL.
+Spotify ads and locally imported files are shown as regular tracks but without artwork, and catalog-based buttons (song/artist/album) are hidden.
 
 ---
 

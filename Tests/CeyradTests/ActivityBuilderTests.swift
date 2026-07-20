@@ -168,13 +168,45 @@ final class ActivityBuilderTests: XCTestCase {
     // MARK: - ボタン
 
     func testDuplicateButtonURLsAreDeduplicated() {
-        // 既定はbutton1=song / button2=repository。カタログ未解決だと
-        // songはリポジトリURLへフォールバックし、両者が同一URLになる
+        settings.button1Type = .repository
+        settings.button2Type = .repository
         let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: nil, settings: settings
         )
         let buttons = activity["buttons"] as? [[String: String]]
         XCTAssertEqual(buttons?.count, 1)
+        XCTAssertEqual(buttons?.first?["url"], SettingsStore.defaultRepositoryURL)
+    }
+
+    func testUnresolvedCatalogDropsButtonInsteadOfFallback() {
+        // 既定はbutton1=song / button2=repository。カタログ未解決の曲（ローカル取り込み等）では
+        // songボタンを出さず、repositoryボタンだけが残る
+        let activity = ActivityBuilder.build(
+            track: track(), playerState: .playing, catalog: nil, settings: settings
+        )
+        let buttons = activity["buttons"] as? [[String: String]]
+        XCTAssertEqual(buttons?.count, 1)
+        XCTAssertEqual(buttons?.first?["label"], "About This App")
+        XCTAssertEqual(buttons?.first?["url"], SettingsStore.defaultRepositoryURL)
+    }
+
+    func testBothButtonsOffOmitsButtonsKey() {
+        settings.button1Type = .disabled
+        settings.button2Type = .disabled
+        let activity = ActivityBuilder.build(
+            track: track(), playerState: .playing, catalog: catalog(), settings: settings
+        )
+        XCTAssertNil(activity["buttons"])
+    }
+
+    func testButton2PromotedWhenButton1IsOff() {
+        settings.button1Type = .disabled
+        let activity = ActivityBuilder.build(
+            track: track(), playerState: .playing, catalog: catalog(), settings: settings
+        )
+        let buttons = activity["buttons"] as? [[String: String]]
+        XCTAssertEqual(buttons?.count, 1)
+        XCTAssertEqual(buttons?.first?["label"], "About This App")
         XCTAssertEqual(buttons?.first?["url"], SettingsStore.defaultRepositoryURL)
     }
 

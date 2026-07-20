@@ -86,6 +86,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         submenu.addItem(infoItem(t("Link Destination", "リンク先")))
         for candidate in LinkType.selectableCases {
+            // 「オフ」はリンク先の一種ではなく「ボタンを消す」操作なので区切って目立たせる
+            if candidate == .disabled {
+                submenu.addItem(.separator())
+            }
             let sub = NSMenuItem(
                 title: candidate.displayName,
                 action: #selector(selectLinkType(_:)), keyEquivalent: ""
@@ -98,13 +102,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
 
         submenu.addItem(.separator())
-        let labelItem = actionItem(
-            t("Change Label… (\"\(label)\")", "ラベルを変更…（\"\(label)\"）"),
-            index == 1
-                ? #selector(editButton1Label)
-                : #selector(editButton2Label)
-        )
-        submenu.addItem(labelItem)
+        if type == .disabled {
+            // オフ中はラベルが使われないため無効表示（actionなし＝自動でグレーアウト）
+            submenu.addItem(infoItem(t("Change Label…", "ラベルを変更…")))
+        } else {
+            let labelItem = actionItem(
+                t("Change Label… (\"\(label)\")", "ラベルを変更…（\"\(label)\"）"),
+                index == 1
+                    ? #selector(editButton1Label)
+                    : #selector(editButton2Label)
+            )
+            submenu.addItem(labelItem)
+        }
 
         item.submenu = submenu
         return item
@@ -291,8 +300,8 @@ extension MenuBarController {
             let value = prompt(
                 title: t("Repository URL", "リポジトリURL"),
                 message: t(
-                    "Used for the Repository button and as a fallback when a link cannot be resolved",
-                    "リポジトリボタンや、リンクが解決できないときのフォールバックに使用"
+                    "URL used when a button's link destination is \"Repository\"",
+                    "ボタンのリンク先が「リポジトリ」のときに使うURL"
                 ),
                 current: settings.repositoryURL
             )

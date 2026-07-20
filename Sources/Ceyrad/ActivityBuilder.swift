@@ -96,15 +96,15 @@ enum ActivityBuilder {
         return buttons
     }
 
-    /// Catalog URLが解決できなかった場合（ローカル取り込み曲など）はリポジトリURLへフォールバック
+    /// Catalog URLが解決できなかった場合（ローカル取り込み曲など）はそのボタンを出さない
     private static func resolveURL(
         type: LinkType, catalog: CatalogInfo?,
         settings: SettingsStore
     ) -> String? {
         switch type {
-        case .song: return catalog?.songURL ?? settings.repositoryURL
-        case .artist: return catalog?.artistURL ?? settings.repositoryURL
-        case .album: return catalog?.albumURL ?? settings.repositoryURL
+        case .song: return catalog?.songURL
+        case .artist: return catalog?.artistURL
+        case .album: return catalog?.albumURL
         case .custom: return settings.customURL
         case .repository: return settings.repositoryURL
         case .disabled: return nil
