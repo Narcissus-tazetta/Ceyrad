@@ -6,6 +6,14 @@
         <description>Ceyradの更新情報</description>
         <language>ja</language>
         <item>
+            <title>v0.0.5</title>
+            <pubDate>Mon, 20 Jul 2026 03:49:24 +0000</pubDate>
+            <sparkle:version>0.0.5</sparkle:version>
+            <sparkle:shortVersionString>0.0.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/Narcissus-tazetta/Ceyrad/releases/download/v0.0.5/Ceyrad-v0.0.5-macos.zip" sparkle:edSignature="ABQjof+05tZu44CMtTg8butx/lGO8B7UVHxAqV27eIgVEBX8fl0wk2WYGQ77PM4CmkTghvPU8WG3OF9kCbONCQ==" length="2055393" type="application/octet-stream" />
+        </item>
+        <item>
             <title>v0.0.4</title>
             <pubDate>Mon, 13 Jul 2026 15:26:48 +0000</pubDate>
             <sparkle:version>0.0.4</sparkle:version>
