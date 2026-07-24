@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 var current = self.sources.appleMusic.track, current.identity == info.identity
             else { return }
             current.positionSec = position
+            current.positionSampledAt = Date()
             self.sources.appleMusic.track = current
             if self.activeSource == .appleMusic {
                 self.pushActivity()

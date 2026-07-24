@@ -84,6 +84,22 @@ final class ActivityBuilderTests: XCTestCase {
         XCTAssertNil(paused["timestamps"])
     }
 
+    /// ボタンラベル変更など、position取得後に発生した無関係な再送でタイムスタンプが
+    /// 巻き戻らない（＝進捗バーがリセットされない）ことを確認する回帰テスト。
+    func testStalePositionSampleIsCorrectedForElapsedTime() {
+        var stale = track(position: 50)
+        stale.positionSampledAt = Date().addingTimeInterval(-10)
+        let activity = ActivityBuilder.build(
+            track: stale, playerState: .playing, catalog: nil, settings: settings
+        )
+        let stamps = activity["timestamps"] as? [String: Int]
+        let start = stamps?["start"] ?? 0
+
+        let expectedPosition = 60.0  // 50sサンプル + 10s経過
+        let expectedStart = Int(((Date().timeIntervalSince1970 - expectedPosition) * 1000).rounded())
+        XCTAssertLessThan(abs(start - expectedStart), 500, "経過時間ぶん位置を補正できていない")
+    }
+
     func testNoTimestampsWithoutPositionOrDuration() {
         let activity = ActivityBuilder.build(
             track: track(duration: nil, position: nil), playerState: .playing,

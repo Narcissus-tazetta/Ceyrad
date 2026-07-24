@@ -51,12 +51,16 @@ enum ActivityBuilder {
         }
         activity["status_display_type"] = badgeLabel.rawValue
 
-        // プログレスバーは再生中のみ。positionは通知発火時にAppleScriptで補完済み。
+        // プログレスバーは再生中のみ。positionは通知発火時にAppleScriptで補完済みだが、
+        // ボタン設定変更などposition取得後に発生した再送では値が古くなっているため、
+        // 取得時刻からの経過分を足して現在位置を推定する（そうしないと進捗バーが巻き戻る）。
         if playerState == .playing,
             let position = track.positionSec,
             let duration = track.durationSec, duration > 0
         {
-            let start = Date().timeIntervalSince1970 - position
+            let elapsedSinceSample = max(0, Date().timeIntervalSince(track.positionSampledAt))
+            let currentPosition = min(position + elapsedSinceSample, duration)
+            let start = Date().timeIntervalSince1970 - currentPosition
             activity["timestamps"] = [
                 "start": Int((start * 1000).rounded()),
                 "end": Int(((start + duration) * 1000).rounded()),
