@@ -22,7 +22,7 @@ struct TrackInfo: Equatable {
     /// positionSecを取得した時刻。再生中に古いpositionSecのままActivityを再送すると
     /// タイムスタンプが巻き戻ってDiscordの進捗バーがリセットされて見えるため、
     /// 送信時にここからの経過分を足して補正する。
-    var positionSampledAt: Date = Date()
+    var positionSampledAt = Date()
     /// Spotifyの"spotify:track:xxx"。Apple Musicはnil。
     var trackId: String?
 
