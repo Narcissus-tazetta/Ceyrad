@@ -199,6 +199,8 @@ v1からの主な変更点:
 
 v2のApple Musicハードコードを、性能モデル（イベント駆動・ポーリングなし・非稼働時コストゼロ）を保ったまま2ソース化した。
 
+**既定はSpotifyオフ（v4）**: Discord本体が公式のSpotify連携を持つため、Ceyradとしては副次的な機能と位置づけ、`sourceSpotifyEnabled` の既定値を `false` にした（Apple Musicは `true` のまま）。無効なソースは起動していても監視しないため、既定状態ではSpotify側のDNC購読・AppleScript呼び出し・カタログ解決がいずれも発生せず、常駐コストはv2（Apple Music単独）と同等に戻る。既に明示的にトグルを操作したユーザーの保存値は変わらない（未設定時のフォールバックのみを変更）。
+
 ### 設計
 
 - **プロトコルではなくenum + ディスクリプタ + 純粋関数**。`MusicSourceID`（`.appleMusic` / `.spotify`）と `MusicSourceDescriptor`（bundle ID・通知名・Discord client ID・表示名・userInfoパーサ）に宣言的な差分を寄せ、振る舞いの差分（位置補完・カタログ解決）は `AppDelegate` の `switch source` に置く。

@@ -130,8 +130,16 @@ final class SettingsStore {
     // MARK: - Music sources
 
     /// ソース別の有効/無効。無効にしたソースは起動していても監視しない。
+    /// Spotifyの既定はオフ。Discord自体が公式のSpotify連携を持つため、本アプリでは副次的な機能として扱う。
     func isSourceEnabled(_ source: MusicSourceID) -> Bool {
-        defaults.object(forKey: Self.sourceKey(source)) as? Bool ?? true
+        defaults.object(forKey: Self.sourceKey(source)) as? Bool ?? Self.defaultEnabled(source)
+    }
+
+    private static func defaultEnabled(_ source: MusicSourceID) -> Bool {
+        switch source {
+        case .appleMusic: return true
+        case .spotify: return false
+        }
     }
 
     func setSourceEnabled(_ source: MusicSourceID, _ enabled: Bool) {

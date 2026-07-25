@@ -85,8 +85,9 @@ final class SettingsStoreTests: XCTestCase {
     // MARK: - ミュージックソースの有効/無効
 
     func testSourcesEnabledByDefault() {
+        // Discordが公式のSpotify連携を持つため、Spotifyは既定でオフの副次機能として扱う
         XCTAssertTrue(settings.isSourceEnabled(.appleMusic))
-        XCTAssertTrue(settings.isSourceEnabled(.spotify))
+        XCTAssertFalse(settings.isSourceEnabled(.spotify))
     }
 
     func testSourceToggleIsPersistedPerSource() {
