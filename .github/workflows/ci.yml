@@ -1,9 +1,16 @@
 name: CI
 
+# Windows版（windows/）はci-windows.ymlが担当するため、ここでは対象外にする
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "windows/**"
+      - ".github/workflows/ci-windows.yml"
   pull_request:
+    paths-ignore:
+      - "windows/**"
+      - ".github/workflows/ci-windows.yml"
 
 jobs:
   lint:
