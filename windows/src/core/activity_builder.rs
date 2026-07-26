@@ -123,6 +123,52 @@ pub fn build(
     activity
 }
 
+/// Drift allowed between two builds of the same unchanged playback before they
+/// count as different. Rebuilding an activity always recomputes `timestamps`
+/// from the wall clock, so byte equality never holds — but a re-send that
+/// Discord would render identically is wasted traffic against a rate limit that
+/// only allows a handful of updates per 20 seconds.
+const TIMESTAMP_DRIFT_MS: i64 = 2_000;
+
+/// Whether Discord would render these two activities the same way.
+pub fn is_equivalent(a: &Map<String, Value>, b: &Map<String, Value>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (key, a_value) in a {
+        let Some(b_value) = b.get(key) else {
+            return false;
+        };
+        if key == "timestamps" {
+            if !timestamps_equivalent(a_value, b_value) {
+                return false;
+            }
+        } else if a_value != b_value {
+            return false;
+        }
+    }
+    true
+}
+
+fn timestamps_equivalent(a: &Value, b: &Value) -> bool {
+    let field = |value: &Value, name: &str| value.get(name).and_then(Value::as_i64);
+    match (
+        field(a, "start"),
+        field(b, "start"),
+        field(a, "end"),
+        field(b, "end"),
+    ) {
+        (Some(a_start), Some(b_start), Some(a_end), Some(b_end)) => {
+            // A seek moves `start` far more than the drift window, so it still
+            // reads as a change; a plain re-send moves it by the latency of the
+            // round trip.
+            (a_start - b_start).abs() <= TIMESTAMP_DRIFT_MS
+                && (a_end - b_end).abs() <= TIMESTAMP_DRIFT_MS
+        }
+        _ => a == b,
+    }
+}
+
 /// Discord allows at most 2 buttons, labels ≤ 32 chars, urls ≤ 512 chars.
 fn build_buttons(
     catalog: Option<&CatalogInfo>,

@@ -1,8 +1,16 @@
 pub mod activity_builder;
+pub mod aumid;
 pub mod debouncer;
 pub mod format_time;
 pub mod i18n;
+pub mod itunes;
+pub mod menu_model;
 pub mod models;
 pub mod settings_model;
 pub mod source_selector;
 pub mod status_lines;
+pub mod track_change;
+pub mod track_metadata;
+pub mod tray_icon_glyph;
+pub mod update_check;
+pub mod url_prompt;

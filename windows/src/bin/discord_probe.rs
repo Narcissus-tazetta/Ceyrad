@@ -2,7 +2,7 @@
 //!
 //! Scans `\\.\pipe\discord-ipc-0..9`, handshakes, waits for READY, then pushes
 //! a fixed activity so it can be eyeballed on a Discord profile. Answers PINGs
-//! and clears the activity on exit, the same way the real client will.
+//! and clears the activity on exit, the same way the real client does.
 //!
 //! Usage: `cargo run --bin discord_probe [apple-music|spotify]`
 
@@ -20,95 +20,18 @@ fn main() -> std::io::Result<()> {
 #[cfg(windows)]
 mod imp {
     use std::io;
-    use std::thread;
-    use std::time::{Duration, SystemTime};
+    use std::time::{Duration, Instant, SystemTime};
 
     use ceyrad::core::activity_builder;
     use ceyrad::core::models::{CatalogInfo, MusicSourceId, PlayerState, TrackInfo};
     use ceyrad::core::settings_model::Settings;
-    use ceyrad::discord::protocol::{
-        encode_frame, handshake_payload, set_activity_payload, FrameDecoder, Opcode, ProtocolError,
-    };
+    use ceyrad::discord::pipe::{Pipe, Wakeup};
+    use ceyrad::discord::protocol::handshake_payload;
+    use ceyrad::discord::protocol::{set_activity_payload, FrameDecoder, Opcode, ProtocolError};
     use serde_json::Value;
 
-    use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Storage::FileSystem::{
-        CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE, OPEN_EXISTING,
-    };
-
     /// How long to leave the activity up before clearing it.
-    const HOLD_SECS: u64 = 60;
-
-    const GENERIC_READ: u32 = 0x8000_0000;
-    const GENERIC_WRITE: u32 = 0x4000_0000;
-
-    struct Pipe(HANDLE);
-
-    impl Drop for Pipe {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
-    }
-
-    impl Pipe {
-        /// Tries `discord-ipc-0` through `-9` and keeps the first that opens.
-        fn connect() -> io::Result<Self> {
-            let mut last_err = None;
-            for i in 0..10 {
-                let path = format!(r"\\.\pipe\discord-ipc-{i}");
-                let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-                let handle: windows::core::Result<HANDLE> = unsafe {
-                    CreateFileW(
-                        PCWSTR(wide.as_ptr()),
-                        GENERIC_READ | GENERIC_WRITE,
-                        FILE_SHARE_MODE(0),
-                        None,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        None,
-                    )
-                };
-                match handle {
-                    Ok(handle) if !handle.is_invalid() => {
-                        println!("connected: {path}");
-                        return Ok(Self(handle));
-                    }
-                    Ok(_) => {}
-                    Err(e) => last_err = Some(e),
-                }
-            }
-            Err(io::Error::other(format!(
-                "no discord-ipc pipe found (is Discord running?); last error: {last_err:?}"
-            )))
-        }
-
-        fn write_all(&self, mut buf: &[u8]) -> io::Result<()> {
-            while !buf.is_empty() {
-                let mut written = 0u32;
-                unsafe { WriteFile(self.0, Some(buf), Some(&mut written), None) }
-                    .map_err(io::Error::other)?;
-                if written == 0 {
-                    return Err(io::Error::other("pipe closed during write"));
-                }
-                buf = &buf[written as usize..];
-            }
-            Ok(())
-        }
-
-        fn read_some(&self, buf: &mut [u8]) -> io::Result<usize> {
-            let mut read = 0u32;
-            unsafe { ReadFile(self.0, Some(buf), Some(&mut read), None) }
-                .map_err(io::Error::other)?;
-            Ok(read as usize)
-        }
-
-        fn send(&self, opcode: Opcode, payload: &Value) -> io::Result<()> {
-            self.write_all(&encode_frame(opcode, payload))
-        }
-    }
+    const HOLD: Duration = Duration::from_secs(60);
 
     fn sample_activity(source: MusicSourceId) -> Value {
         let mut track = TrackInfo::new("Ceyrad Probe", "Test Artist", "Test Album");
@@ -141,6 +64,7 @@ mod imp {
         println!("source: {} / client_id: {client_id}", source.display_name());
 
         let pipe = Pipe::connect()?;
+        println!("connected");
         pipe.send(Opcode::Handshake, &handshake_payload(client_id))?;
 
         let mut decoder = FrameDecoder::new();
@@ -148,14 +72,24 @@ mod imp {
         let mut ready = false;
         let mut nonce = 0u64;
 
-        let deadline = SystemTime::now() + Duration::from_secs(HOLD_SECS);
-        while SystemTime::now() < deadline {
-            let n = pipe.read_some(&mut buf)?;
-            if n == 0 {
-                println!("pipe closed by Discord");
+        let deadline = Instant::now() + HOLD;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 break;
             }
-            decoder.push(&buf[..n]);
+
+            // The deadline is honoured even when Discord sends nothing at all,
+            // which is the normal state of an idle connection.
+            match pipe.read_or_signal(&mut buf, None, Some(remaining))? {
+                Wakeup::Timeout => break,
+                Wakeup::Closed => {
+                    println!("pipe closed by Discord");
+                    return Ok(());
+                }
+                Wakeup::Signaled | Wakeup::Message => continue,
+                Wakeup::Data(n) => decoder.push(&buf[..n]),
+            }
 
             loop {
                 match decoder.next_frame() {
@@ -178,7 +112,8 @@ mod imp {
                                         ),
                                     )?;
                                     println!(
-                                        "check your Discord profile — clearing in {HOLD_SECS}s"
+                                        "check your Discord profile — clearing in {}s",
+                                        HOLD.as_secs()
                                     );
                                 }
                             }
@@ -208,7 +143,9 @@ mod imp {
                 Opcode::Frame,
                 &set_activity_payload(None, std::process::id(), &format!("probe-{nonce}")),
             )?;
-            thread::sleep(Duration::from_millis(300));
+            // The write is only queued; give Discord a moment to drain it
+            // before the handle closes.
+            std::thread::sleep(Duration::from_millis(300));
         }
         Ok(())
     }

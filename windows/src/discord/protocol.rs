@@ -66,6 +66,28 @@ impl Frame {
             .as_str()
             .map(|s| s.to_string())
     }
+
+    /// Human-readable reason from an ERROR frame or a CLOSE.
+    ///
+    /// Discord reports an invalid client id, a rate limit or a refused
+    /// activity only here, and it is the one place a misconfiguration shows
+    /// up at all — so an unparseable body falls back to the raw bytes rather
+    /// than to nothing.
+    pub fn error_message(&self) -> String {
+        let Some(json) = self.payload_json() else {
+            return String::from_utf8_lossy(&self.payload).into_owned();
+        };
+        // FRAME nests it under `data`; CLOSE puts it at the top level.
+        let data = json.get("data").unwrap_or(&json);
+        let message = data.get("message").and_then(Value::as_str);
+        let code = data.get("code").and_then(Value::as_i64);
+        match (message, code) {
+            (Some(message), Some(code)) => format!("{message} (code {code})"),
+            (Some(message), None) => message.to_string(),
+            (None, Some(code)) => format!("code {code}"),
+            (None, None) => json.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

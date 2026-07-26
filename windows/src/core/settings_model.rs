@@ -110,39 +110,22 @@ impl BadgeLabelType {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_repository_url() -> String {
-    DEFAULT_REPOSITORY_URL.to_string()
-}
-
-fn default_button2_type() -> LinkType {
-    LinkType::Repository
-}
-
-fn default_pause_hide_minutes() -> i32 {
-    5
-}
-
+/// Container-level `#[serde(default)]` fills every missing key from
+/// `Settings::default()`, so a hand-edited or partial file still loads and
+/// there is exactly one place a default is written down.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub button1_type: LinkType,
     /// `None` means the label follows `button1_type`'s default.
     button1_label: Option<String>,
-    #[serde(default = "default_button2_type")]
     pub button2_type: LinkType,
     button2_label: Option<String>,
     pub custom_url: String,
-    #[serde(default = "default_repository_url")]
     pub repository_url: String,
     pub badge_label: BadgeLabelType,
-    #[serde(default = "default_pause_hide_minutes")]
     pub pause_hide_minutes: i32,
     pub language: AppLanguage,
-    #[serde(default = "default_true")]
     pub apple_music_enabled: bool,
     /// Off by default: Discord ships its own Spotify integration, so Ceyrad
     /// only drives Spotify when the user explicitly asks for it.
@@ -157,9 +140,9 @@ impl Default for Settings {
             button2_type: LinkType::Repository,
             button2_label: None,
             custom_url: String::new(),
-            repository_url: default_repository_url(),
+            repository_url: DEFAULT_REPOSITORY_URL.to_string(),
             badge_label: BadgeLabelType::Artist,
-            pause_hide_minutes: default_pause_hide_minutes(),
+            pause_hide_minutes: 5,
             language: AppLanguage::En,
             apple_music_enabled: true,
             spotify_enabled: false,

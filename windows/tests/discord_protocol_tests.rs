@@ -120,3 +120,61 @@ fn set_activity_payload_clears_with_null() {
     let payload = set_activity_payload(None, 4321, "nonce-2");
     assert!(payload["args"]["activity"].is_null());
 }
+
+// MARK: - Diagnostics
+//
+// An ERROR frame or a CLOSE is the only place Discord explains an invalid
+// client id, a refused activity or a rate limit — and with no tray UI, the log
+// line built from it is the only place a user would ever see the reason.
+
+fn frame_with(payload: serde_json::Value) -> Frame {
+    Frame {
+        opcode: Opcode::Frame,
+        payload: serde_json::to_vec(&payload).expect("serialize"),
+    }
+}
+
+#[test]
+fn an_error_frame_reports_message_and_code() {
+    let frame = frame_with(json!({
+        "evt": "ERROR",
+        "data": { "code": 4000, "message": "Invalid Client ID" },
+    }));
+    assert_eq!(frame.event().as_deref(), Some("ERROR"));
+    assert_eq!(frame.error_message(), "Invalid Client ID (code 4000)");
+}
+
+#[test]
+fn a_close_reports_its_top_level_reason() {
+    let frame = Frame {
+        opcode: Opcode::Close,
+        payload: serde_json::to_vec(&json!({ "code": 4001, "message": "Invalid Origin" }))
+            .expect("serialize"),
+    };
+    assert_eq!(frame.error_message(), "Invalid Origin (code 4001)");
+}
+
+#[test]
+fn a_reason_with_only_one_half_still_reads() {
+    assert_eq!(
+        frame_with(json!({ "data": { "message": "Rate limited" } })).error_message(),
+        "Rate limited"
+    );
+    assert_eq!(
+        frame_with(json!({ "data": { "code": 4000 } })).error_message(),
+        "code 4000"
+    );
+}
+
+#[test]
+fn an_unhelpful_body_falls_back_to_what_arrived() {
+    // Never empty: something the user can paste is better than silence.
+    let frame = Frame {
+        opcode: Opcode::Close,
+        payload: b"not json at all".to_vec(),
+    };
+    assert_eq!(frame.error_message(), "not json at all");
+
+    let frame = frame_with(json!({ "evt": "ERROR" }));
+    assert!(frame.error_message().contains("ERROR"));
+}

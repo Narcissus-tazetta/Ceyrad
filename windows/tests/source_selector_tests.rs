@@ -12,8 +12,8 @@ fn source(running: bool, state: PlayerState, has_track: bool, event_ns: u64) -> 
         } else {
             None
         },
-        catalog: None,
         last_event_uptime_ns: event_ns,
+        ..SourceState::default()
     }
 }
 

@@ -3,31 +3,22 @@ use super::models::{ConnState, MusicSourceId, PlayerState, SourceState, TrackInf
 
 /// Values shown as the disabled info rows at the top of the tray menu.
 ///
+/// The states are borrowed, not owned: this is rebuilt on every pass of the
+/// event loop to notice a change, and SMTC wakes that loop several times a
+/// second — cloning two `SourceState`s each time would be the app's largest
+/// steady-state allocation for no gain.
+///
 /// Unlike macOS there are no automation-permission warnings: SMTC needs no
 /// user grant, so those rows have no Windows counterpart.
 #[derive(Debug, Clone)]
-pub struct Input {
-    pub apple_music: SourceState,
-    pub spotify: SourceState,
+pub struct Input<'a> {
+    pub apple_music: &'a SourceState,
+    pub spotify: &'a SourceState,
     pub active_source: Option<MusicSourceId>,
     pub apple_music_enabled: bool,
     pub spotify_enabled: bool,
     pub discord_state: ConnState,
     pub language: AppLanguage,
-}
-
-impl Default for Input {
-    fn default() -> Self {
-        Self {
-            apple_music: SourceState::default(),
-            spotify: SourceState::default(),
-            active_source: None,
-            apple_music_enabled: true,
-            spotify_enabled: false,
-            discord_state: ConnState::Disconnected,
-            language: AppLanguage::En,
-        }
-    }
 }
 
 pub fn lines(input: &Input) -> Vec<String> {
@@ -97,10 +88,10 @@ fn enabled_sources(input: &Input) -> Vec<MusicSourceId> {
         .collect()
 }
 
-fn state_for(source: MusicSourceId, input: &Input) -> &SourceState {
+fn state_for<'a>(source: MusicSourceId, input: &Input<'a>) -> &'a SourceState {
     match source {
-        MusicSourceId::AppleMusic => &input.apple_music,
-        MusicSourceId::Spotify => &input.spotify,
+        MusicSourceId::AppleMusic => input.apple_music,
+        MusicSourceId::Spotify => input.spotify,
     }
 }
 

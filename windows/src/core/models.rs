@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 /// Separator used to join track fields into an identity string (U+001F).
 const UNIT_SEPARATOR: char = '\u{1F}';
@@ -100,6 +100,14 @@ pub struct SourceState {
     pub player_state: PlayerState,
     pub track: Option<TrackInfo>,
     pub catalog: Option<CatalogInfo>,
+    /// The `TrackInfo::identity` a catalog lookup has already been asked for.
+    /// SMTC reports several events a second while a track plays, so without
+    /// this the same track would be looked up over and over.
+    pub catalog_requested_for: Option<String>,
+    /// When a lookup that failed outright — offline, or the API refused — may
+    /// be tried again. A failure is not an answer, so unlike a catalogue miss
+    /// it must not silently cost the track its artwork for good.
+    pub catalog_retry_at: Option<Instant>,
     /// Monotonic timestamp of the last event, used to break ties when both
     /// sources are playing.
     pub last_event_uptime_ns: u64,
@@ -112,6 +120,8 @@ impl Default for SourceState {
             player_state: PlayerState::Stopped,
             track: None,
             catalog: None,
+            catalog_requested_for: None,
+            catalog_retry_at: None,
             last_event_uptime_ns: 0,
         }
     }
