@@ -101,3 +101,69 @@ jobs:
           git add appcast.xml
           git commit -m "Update appcast.xml for ${TAG}"
           git push origin main
+
+  # Windows版はポータブルzip（exe単体）を同じリリースに追加する。
+  # インストーラとコード署名は未対応のため、Sparkle相当の自動更新も行わない
+  # （アプリ内では新しいリリースの有無だけを確認し、ブラウザで開く）。
+  build-windows:
+    # 先にmacOS版のジョブがリリースを作る。同じタグに追記するだけにして、
+    # 2つのジョブが同時にリリースを作ろうとする競合を避ける。
+    needs: build-and-release
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      # macOS側のジョブとは別ジョブなのでoutputsを共有できない。
+      # 共有ジョブを挟むより、動作実績のあるmacOS側に手を入れないほうを選ぶ。
+      - name: Determine version
+        id: vars
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ inputs.version }}"
+          else
+            RAW_VERSION="$GITHUB_REF_NAME"
+          fi
+          VERSION="${RAW_VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+
+      # CARGO_PKG_VERSIONがアップデート確認の比較元になるため、
+      # タグのバージョンをビルド前に埋め込む。
+      # [package]直下の最初のversion行だけを置換する（rust-versionや
+      # 依存クレートのバージョンに当てないため）。
+      - name: Set version from tag
+        shell: pwsh
+        run: |
+          $path = 'Cargo.toml'
+          $content = Get-Content $path -Raw
+          $pattern = [regex]::new('(?m)^version = "[^"]*"')
+          $updated = $pattern.Replace($content, 'version = "${{ steps.vars.outputs.version }}"', 1)
+          if ($updated -eq $content) { throw "Cargo.tomlのversion行が見つかりませんでした" }
+          Set-Content $path -Value $updated -Encoding utf8 -NoNewline
+
+      - name: Build
+        run: cargo build --release --bin ceyrad
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path target/release/ceyrad.exe `
+            -DestinationPath "Ceyrad-${{ steps.vars.outputs.tag }}-windows.zip"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          files: windows/Ceyrad-${{ steps.vars.outputs.tag }}-windows.zip
