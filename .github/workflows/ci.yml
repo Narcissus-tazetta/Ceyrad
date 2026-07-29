@@ -1,16 +1,27 @@
 name: CI
 
+# Windows版（windows/）はci-windows.ymlが担当するが、ここをpaths-ignoreで絞ることは
+# しない。絞るとwindows/**だけを変えたPRでこのワークフローが起動せず、必須チェックに
+# した場合に永久に「報告待ち」で止まる（スキップされたジョブは満たされたとみなされるが、
+# 存在しないチェックは違う）。mainへのマージでもmacOS側CIが素通りしてしまう。
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     # lint.shの`swift format`サブコマンドはSwift 6（Xcode 16）以降の同梱のため、macos-15を使う
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -21,7 +32,7 @@ jobs:
   build:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Test
         run: swift test

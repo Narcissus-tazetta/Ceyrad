@@ -1,0 +1,54 @@
+name: CI (Windows)
+
+# 意図的にパスで絞っていない。paths/paths-ignoreで絞ると、そのパスに触れないPRでは
+# ワークフロー自体が起動せず、必須チェックにした場合に「報告されないまま永久に待つ」
+# 状態になる（スキップされたジョブは満たされたとみなされるが、存在しないチェックは違う）。
+# Windows CIは数分で終わるので、常に走らせるほうが安全側に倒せる。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# 同じブランチへ追撃pushしたら古い実行は止める。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: windows
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      # サードパーティのactionはコミットSHAで固定する。可変タグ（v2やstable）は
+      # 中身が差し替わりうるため、リリースワークフローのcontents: write権限と
+      # 組み合わせると影響範囲が大きい。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: windows
+
+      - name: Format
+        run: cargo fmt --check
+
+      # --locked: Cargo.lockをコミットしている以上、CIが勝手に新しいsemver互換版へ
+      # 解決すると「レビューしたもの」と「テストしたもの」がずれる。
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --locked --release

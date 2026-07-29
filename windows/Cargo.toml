@@ -1,0 +1,62 @@
+[package]
+name = "ceyrad"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Discord Rich Presence for Apple Music (Windows port of Ceyrad)"
+repository = "https://github.com/Narcissus-tazetta/Ceyrad"
+license = "MIT"
+
+[lib]
+name = "ceyrad"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Windows-only, so `cargo test` on the pure logic still works on any host.
+[target.'cfg(windows)'.dependencies]
+# `windows` depends on this but does not re-export it, and the WinRT async
+# types have to be named to put a deadline on a lookup (see `catalog`).
+windows-future = "0.3"
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Control",
+    "Storage_Streams",
+    "Web_Http",
+    # GitHub refuses a request with no User-Agent, so the header collection is
+    # not optional here.
+    "Web_Http_Headers",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+tray-icon = { version = "0.24.1", default-features = false }
+muda = { version = "0.19.3", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+# Unwind, not abort. Removing the notification-area icon is `Drop`-driven, and
+# `abort` runs no destructors — so a panic would leave a ghost icon sitting in
+# the tray until the user moused over it. Unwinding also keeps a panic in the
+# catalog or updater worker to that worker, which is the degraded state both
+# modules already handle, rather than taking the whole app down with it. The
+# landing pads cost a little size; a windowless binary that dies leaving litter
+# behind costs more.
+panic = "unwind"
+strip = true

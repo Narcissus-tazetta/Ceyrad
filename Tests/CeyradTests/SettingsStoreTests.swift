@@ -85,8 +85,9 @@ final class SettingsStoreTests: XCTestCase {
     // MARK: - ミュージックソースの有効/無効
 
     func testSourcesEnabledByDefault() {
+        // Discordが公式のSpotify連携を持つため、Spotifyは既定でオフの副次機能として扱う
         XCTAssertTrue(settings.isSourceEnabled(.appleMusic))
-        XCTAssertTrue(settings.isSourceEnabled(.spotify))
+        XCTAssertFalse(settings.isSourceEnabled(.spotify))
     }
 
     func testSourceToggleIsPersistedPerSource() {
@@ -95,5 +96,19 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(settings.isSourceEnabled(.appleMusic))
         settings.setSourceEnabled(.spotify, true)
         XCTAssertTrue(settings.isSourceEnabled(.spotify))
+    }
+
+    func testExplicitlyEnabledSpotifySurvivesTheDefaultChange() {
+        // 既定をオフにした変更が、以前に明示的にオンへしたユーザーの保存値を巻き戻さないこと。
+        // 「object(forKey:)がnilを返すのは未設定のときだけ」という前提そのものを固定する。
+        // defaults.bool(forKey:)に書き換えると、未設定とfalseが区別できなくなりここが落ちる。
+        defaults.set(true, forKey: "sourceSpotifyEnabled")
+        XCTAssertTrue(settings.isSourceEnabled(.spotify))
+    }
+
+    func testExplicitlyDisabledAppleMusicIsNotOverriddenByItsDefault() {
+        // 逆向き。既定がtrueのソースを明示的にオフにした保存値も同じく尊重される。
+        defaults.set(false, forKey: "sourceAppleMusicEnabled")
+        XCTAssertFalse(settings.isSourceEnabled(.appleMusic))
     }
 }
