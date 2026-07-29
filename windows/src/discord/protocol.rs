@@ -5,6 +5,8 @@
 //! little-endian header (opcode, then JSON byte length) followed by the JSON
 //! body.
 
+use std::io;
+
 use serde_json::{json, Value};
 
 /// A length past this is treated as a protocol violation rather than an
@@ -97,13 +99,17 @@ pub enum ProtocolError {
     UnknownOpcode(u32),
 }
 
-pub fn encode_frame(opcode: Opcode, payload: &Value) -> Vec<u8> {
-    let body = serde_json::to_vec(payload).expect("activity payload is always serializable");
+/// Serialization cannot fail for anything this app builds — `serde_json`
+/// numbers are never NaN and every key is a string — but with `panic = "abort"`
+/// being wrong about that would be a silent process death, and every caller
+/// already returns `io::Result`.
+pub fn encode_frame(opcode: Opcode, payload: &Value) -> io::Result<Vec<u8>> {
+    let body = serde_json::to_vec(payload).map_err(io::Error::other)?;
     let mut out = Vec::with_capacity(HEADER_LEN + body.len());
     out.extend_from_slice(&opcode.raw_value().to_le_bytes());
     out.extend_from_slice(&(body.len() as u32).to_le_bytes());
     out.extend_from_slice(&body);
-    out
+    Ok(out)
 }
 
 pub fn handshake_payload(client_id: &str) -> Value {

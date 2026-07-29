@@ -64,7 +64,10 @@ pub struct Resolved {
 }
 
 pub struct Resolver {
-    requests: Sender<Request>,
+    /// `None` when the worker could not be started — the same degraded state
+    /// the module already handles when there is no HTTP client: no artwork and
+    /// no catalog buttons, but a working presence.
+    requests: Option<Sender<Request>>,
     results: Receiver<Resolved>,
 }
 
@@ -75,16 +78,29 @@ impl Resolver {
         let (requests, request_rx) = channel::<Request>();
         let (result_tx, results) = channel::<Resolved>();
 
-        thread::Builder::new()
+        // Not `expect`: with `panic = "abort"` in a windowless binary that is a
+        // silent process death at launch, with no log line to explain it.
+        let spawned = thread::Builder::new()
             .name("catalog".into())
-            .spawn(move || worker(request_rx, result_tx, wake))
-            .expect("failed to spawn the catalog thread");
+            .spawn(move || worker(request_rx, result_tx, wake));
+
+        let requests = match spawned {
+            Ok(_) => Some(requests),
+            Err(e) => {
+                log(&format!(
+                    "catalog: could not start the lookup thread ({e}); artwork is unavailable"
+                ));
+                None
+            }
+        };
 
         Self { requests, results }
     }
 
     pub fn request(&self, request: Request) {
-        let _ = self.requests.send(request);
+        if let Some(requests) = &self.requests {
+            let _ = requests.send(request);
+        }
     }
 
     pub fn try_recv(&self) -> Option<Resolved> {
@@ -307,7 +323,11 @@ fn storefront_country() -> String {
     if written <= 1 {
         return FALLBACK_COUNTRY.to_string();
     }
-    let name = String::from_utf16_lossy(&buffer[..(written - 1) as usize]);
+    // The count comes from the OS, so bound it by the buffer rather than trust
+    // it: an out-of-range slice would panic on this thread's first statement,
+    // taking the lookup worker down before it ever served a request.
+    let len = ((written - 1) as usize).min(buffer.len());
+    let name = String::from_utf16_lossy(&buffer[..len]);
     // The API wants a two-letter storefront; `GetUserDefaultGeoName` can also
     // return things like `001` (world) or a longer tag.
     if name.len() == 2 && name.chars().all(|c| c.is_ascii_alphabetic()) {

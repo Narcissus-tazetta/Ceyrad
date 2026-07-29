@@ -6,7 +6,9 @@
 //! missing keys, so a partial or hand-edited file still loads.
 
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::core::aumid::AumidOverrides;
@@ -74,17 +76,23 @@ pub fn save_to(path: &Path, settings: &Settings) -> io::Result<()> {
     let text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
 
     let temp = temp_sibling(path);
-    std::fs::write(&temp, text)?;
-    // Windows `rename` refuses to clobber, unlike POSIX; the window this opens
-    // is why the temp file is kept for a retry rather than dropped.
+    {
+        // `fs::write` does not reach the disk, so a power loss just after the
+        // rename can leave a zero-length settings.json on NTFS. The flush is
+        // what makes the rename a promotion of durable bytes.
+        let mut file = File::create(&temp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
+    // `std::fs::rename` is `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`, so it
+    // does clobber, atomically — there is no need to unlink the target first,
+    // and doing so would be actively harmful: the realistic reason a rename
+    // fails on Windows is a scanner or a sync client holding the file open, and
+    // the retry would hit the same sharing violation having already deleted the
+    // user's settings.
     if let Err(e) = std::fs::rename(&temp, path) {
-        if path.exists() {
-            std::fs::remove_file(path)?;
-            std::fs::rename(&temp, path)?;
-        } else {
-            let _ = std::fs::remove_file(&temp);
-            return Err(e);
-        }
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
     }
     Ok(())
 }

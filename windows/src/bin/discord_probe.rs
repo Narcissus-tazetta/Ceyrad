@@ -87,7 +87,9 @@ mod imp {
                     println!("pipe closed by Discord");
                     return Ok(());
                 }
-                Wakeup::Signaled | Wakeup::Message => continue,
+                // `Failed` never reaches here — `read_or_signal` reports a
+                // failed wait as an error, which the `?` above takes care of.
+                Wakeup::Signaled | Wakeup::Message | Wakeup::Failed => continue,
                 Wakeup::Data(n) => decoder.push(&buf[..n]),
             }
 

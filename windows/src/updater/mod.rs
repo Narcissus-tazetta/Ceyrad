@@ -35,7 +35,10 @@ pub enum Outcome {
 }
 
 pub struct Updater {
-    requests: Sender<()>,
+    /// `None` when the worker could not be started. Update checks are the most
+    /// expendable thing this app does, so a thread that will not spawn costs
+    /// the feature and nothing else.
+    requests: Option<Sender<()>>,
     results: Receiver<Outcome>,
 }
 
@@ -44,10 +47,22 @@ impl Updater {
         let (requests, request_rx) = channel::<()>();
         let (result_tx, results) = channel::<Outcome>();
 
-        thread::Builder::new()
+        // Not `expect`: with `panic = "abort"` in a windowless binary that is a
+        // silent process death at launch, no message and no log line, for a
+        // feature the app runs fine without.
+        let spawned = thread::Builder::new()
             .name("updater".into())
-            .spawn(move || worker(request_rx, result_tx, wake))
-            .expect("failed to spawn the updater thread");
+            .spawn(move || worker(request_rx, result_tx, wake));
+
+        let requests = match spawned {
+            Ok(_) => Some(requests),
+            Err(e) => {
+                log(&format!(
+                    "updater: could not start the check thread ({e}); update checks are off"
+                ));
+                None
+            }
+        };
 
         Self { requests, results }
     }
@@ -55,7 +70,9 @@ impl Updater {
     /// Asks for a check. Cheap to call more often than needed — the worker
     /// collapses a backlog into one request.
     pub fn check(&self) {
-        let _ = self.requests.send(());
+        if let Some(requests) = &self.requests {
+            let _ = requests.send(());
+        }
     }
 
     pub fn try_recv(&self) -> Option<Outcome> {
@@ -120,6 +137,18 @@ pub fn open_in_browser(url: &str) -> std::io::Result<()> {
     use windows::core::HSTRING;
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    // `ShellExecuteW` with "open" is a shell dispatch, not a browser call: a
+    // non-http string would route to whatever protocol handler, UNC path or
+    // local executable matches it. The URL this app opens comes from a field in
+    // GitHub's JSON, and the app already validates the URLs its own user types
+    // — trusting a remote document more than the person at the keyboard would
+    // be the wrong way round.
+    if !url.starts_with("https://") {
+        return Err(std::io::Error::other(format!(
+            "refusing to open {url}: not an https URL"
+        )));
+    }
 
     let operation = HSTRING::from("open");
     let target = HSTRING::from(url);

@@ -33,7 +33,7 @@ use crate::core::track_change::{position_jumped, same_identity};
 use crate::core::update_check::Release;
 use crate::core::url_prompt;
 use crate::discord::client::{Client, Event as DiscordEvent};
-use crate::discord::pipe::Event as WakeEvent;
+use crate::discord::pipe::{Event as WakeEvent, Wakeup};
 use crate::launch_at_login;
 use crate::smtc::Watcher;
 use crate::tray::{self, dialog, Tray};
@@ -59,6 +59,13 @@ const CATALOG_RETRY_DELAY: Duration = Duration::from_secs(15);
 const FIRST_UPDATE_CHECK_DELAY: Duration = Duration::from_secs(30);
 /// Matching macOS's `SUScheduledCheckInterval`.
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Pause after a wait that failed outright, so a persistent failure degrades
+/// into slow polling instead of a spin.
+const WAIT_FAILURE_BACKOFF: Duration = Duration::from_secs(1);
+
+/// Ceiling on the "already logged this unknown AUMID" memo.
+const MAX_REMEMBERED_AUMIDS: usize = 64;
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// The wake event, as a raw handle so the console handler — which cannot
@@ -181,13 +188,19 @@ impl App {
             // left queued would wake it again at once. A thread with no window
             // has nothing to drain and this costs a syscall.
             if !tray::pump_messages() {
-                log("session ending");
+                log("quit requested");
                 break;
             }
             // Consumed before the dirty flags are read: a handler that fires in
             // between leaves the flag set for this pass, or re-signals for the
             // next one. Neither loses an event.
-            self.wake.reset()?;
+            //
+            // Logged rather than propagated: a `?` here would leave `run`
+            // without ever reaching the teardown below, so a failure to reset
+            // one event would cost the user a stale presence left on Discord.
+            if let Err(e) = self.wake.reset() {
+                log(&format!("wake: could not reset ({e})"));
+            }
 
             if self.watcher.is_dirty() {
                 self.handle_smtc();
@@ -206,7 +219,13 @@ impl App {
                 .map(|deadline| deadline.saturating_duration_since(Instant::now()));
 
             if self.discord.state() == ConnState::Disconnected {
-                self.wake.wait(timeout);
+                // A failed wait returns at once and would do so on every pass;
+                // without the sleep this degrades into a pegged core on a
+                // battery-powered machine with nothing in the log to explain it.
+                if self.wake.wait(timeout) == Wakeup::Failed {
+                    log(&format!("wait failed: {}", io::Error::last_os_error()));
+                    std::thread::sleep(WAIT_FAILURE_BACKOFF);
+                }
             } else {
                 let mut events = Vec::new();
                 let result = self
@@ -483,6 +502,13 @@ impl App {
         };
 
         for aumid in &snapshot.unknown_aumids {
+            // Memo only, to keep the log from repeating itself. Browsers mint a
+            // fresh AUMID per profile and this process runs for months, so the
+            // set is capped rather than allowed to grow for the life of the
+            // app; going over it just means a line may be logged twice.
+            if self.logged_unknown_aumids.len() >= MAX_REMEMBERED_AUMIDS {
+                self.logged_unknown_aumids.clear();
+            }
             if self.logged_unknown_aumids.insert(aumid.clone()) {
                 log(&format!("smtc: ignoring unrecognised session {aumid}"));
             }

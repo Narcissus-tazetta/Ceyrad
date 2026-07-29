@@ -2,51 +2,63 @@
 //! needs to use it.
 //!
 //! WinRT is already in the process for SMTC, so reaching the network this way
-//! costs no extra dependency. What it does not give us is a deadline: a
-//! WinRT async operation has no timeout of its own, and `join()` waits forever.
-//! A stalled request would therefore park its worker thread for good and every
-//! later lookup would queue behind it — so the wait is done by hand and the
-//! operation is cancelled when it overruns.
+//! costs no extra dependency. What it does not give us is a deadline, which is
+//! what `crate::winrt::join_with_timeout` is for.
 //!
 //! Shared by `catalog` and `updater`, which each own a thread that does nothing
 //! but block on one of these.
 
-use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use windows::core::{Result as WinResult, RuntimeType, HRESULT, HSTRING};
+use windows::core::{Error as WinError, Result as WinResult, HRESULT, HSTRING};
 use windows::Foundation::Uri;
-use windows::Web::Http::{HttpClient, HttpMethod, HttpRequestMessage};
-use windows::Win32::Foundation::ERROR_TIMEOUT;
+use windows::Storage::Streams::{Buffer, DataReader, IInputStream, InputStreamOptions};
+use windows::Web::Http::{HttpClient, HttpCompletionOption, HttpMethod, HttpRequestMessage};
+use windows::Win32::Foundation::{ERROR_FILE_TOO_LARGE, ERROR_INVALID_DATA};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
-use windows_future::{AsyncOperationWithProgressCompletedHandler, IAsyncOperationWithProgress};
+
+use crate::winrt::join_with_timeout;
 
 /// Ceiling on one request, matching the macOS build's `timeoutIntervalForRequest`.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Ceiling on request plus body, matching `timeoutIntervalForResource`.
 pub const RESOURCE_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Ceiling on a response body. Without one the only bound on how much a remote
+/// server can make this process allocate is the resource timeout, which on a
+/// fast link is hundreds of megabytes — the whole memory ceiling of a tray app
+/// set by someone else. 256 KB clears both a 10-result iTunes response and a
+/// GitHub release object with room to spare.
+const MAX_RESPONSE_BYTES: u64 = 256 * 1024;
+
 /// Holds this thread's COM apartment for as long as it is alive.
 ///
 /// WinRT apartments are per-thread. A worker that skips this survives only on
 /// whatever the process happens to have already, which is a dependency on the
 /// main thread's choice that would break the moment that choice changed.
-pub struct ComApartment;
+pub struct ComApartment {
+    /// Whether this object is the one that entered the apartment. A caller that
+    /// got `RPC_E_CHANGED_MODE` never entered it, and calling `CoUninitialize`
+    /// in that case decrements a count that belongs to someone else.
+    entered: bool,
+}
 
 impl ComApartment {
     pub fn enter() -> Self {
         // MTA: a worker owns no window and pumps no messages, and every WinRT
         // call it makes is made from this one thread.
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        Self {
+            entered: hr.is_ok(),
         }
-        Self
     }
 }
 
 impl Drop for ComApartment {
     fn drop(&mut self) {
-        unsafe { CoUninitialize() };
+        if self.entered {
+            unsafe { CoUninitialize() };
+        }
     }
 }
 
@@ -82,67 +94,68 @@ impl Http {
                 .Append(&HSTRING::from("User-Agent"), &HSTRING::from(user_agent))?;
         }
 
+        // Headers first, so an oversized body can be refused before it is read
+        // rather than after it is already in memory.
         let response = join_with_timeout(
-            &self.client.SendRequestAsync(&request)?,
+            &self
+                .client
+                .SendRequestWithOptionAsync(&request, HttpCompletionOption::ResponseHeadersRead)?,
             REQUEST_TIMEOUT.min(remaining(deadline)),
         )?;
         response.EnsureSuccessStatusCode()?;
 
-        let body = join_with_timeout(
-            &response.Content()?.ReadAsStringAsync()?,
+        let content = response.Content()?;
+        if let Ok(declared) = content.Headers()?.ContentLength()?.Value() {
+            if declared > MAX_RESPONSE_BYTES {
+                return Err(too_large());
+            }
+        }
+
+        let stream = join_with_timeout(&content.ReadAsInputStreamAsync()?, remaining(deadline))?;
+        let bytes = read_capped(&stream, deadline)?;
+        String::from_utf8(bytes).map_err(|_| {
+            WinError::new(
+                HRESULT::from_win32(ERROR_INVALID_DATA.0),
+                "the response was not valid UTF-8",
+            )
+        })
+    }
+}
+
+/// Reads a stream to its end, giving up past `MAX_RESPONSE_BYTES`.
+///
+/// A `Content-Length` covers the ordinary case, but a chunked response declares
+/// no length at all, so the cap has to hold on the read path too.
+fn read_capped(stream: &IInputStream, deadline: Instant) -> WinResult<Vec<u8>> {
+    const CHUNK: u32 = 16 * 1024;
+
+    let mut out: Vec<u8> = Vec::new();
+    loop {
+        let buffer = Buffer::Create(CHUNK)?;
+        let filled = join_with_timeout(
+            &stream.ReadAsync(&buffer, CHUNK, InputStreamOptions::Partial)?,
             remaining(deadline),
         )?;
-        Ok(body.to_string())
+        let filled_len = filled.Length()?;
+        if filled_len == 0 {
+            return Ok(out);
+        }
+        if out.len() as u64 + u64::from(filled_len) > MAX_RESPONSE_BYTES {
+            return Err(too_large());
+        }
+        let start = out.len();
+        out.resize(start + filled_len as usize, 0);
+        DataReader::FromBuffer(&filled)?.ReadBytes(&mut out[start..])?;
     }
+}
+
+fn too_large() -> WinError {
+    WinError::new(
+        HRESULT::from_win32(ERROR_FILE_TOO_LARGE.0),
+        "the response was larger than this app will read",
+    )
 }
 
 fn remaining(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
-}
-
-/// Waits for a WinRT async operation, cancelling it if it overruns.
-pub fn join_with_timeout<T, P>(
-    operation: &IAsyncOperationWithProgress<T, P>,
-    timeout: Duration,
-) -> WinResult<T>
-where
-    T: RuntimeType + 'static,
-    P: RuntimeType + 'static,
-{
-    let gate = Arc::new((Mutex::new(false), Condvar::new()));
-    let signal = Arc::clone(&gate);
-    operation.SetCompleted(&AsyncOperationWithProgressCompletedHandler::new(
-        move |_, _| {
-            let (done, ready) = &*signal;
-            // A poisoned lock cannot happen — the only other holder is the wait
-            // below, which does not panic while holding it — but a completion
-            // handler must not unwind into WinRT either way.
-            if let Ok(mut done) = done.lock() {
-                *done = true;
-            }
-            ready.notify_all();
-            Ok(())
-        },
-    ))?;
-
-    let (done, ready) = &*gate;
-    let guard = done.lock().map_err(|_| timed_out())?;
-    let (_guard, wait) = ready
-        .wait_timeout_while(guard, timeout, |done| !*done)
-        .map_err(|_| timed_out())?;
-
-    if wait.timed_out() {
-        // The operation is still outstanding; hand it back so the connection is
-        // torn down rather than left dangling on this thread's behalf.
-        let _ = operation.Cancel();
-        return Err(timed_out());
-    }
-    operation.GetResults()
-}
-
-pub fn timed_out() -> windows::core::Error {
-    windows::core::Error::new(
-        HRESULT::from_win32(ERROR_TIMEOUT.0),
-        "the request timed out",
-    )
 }

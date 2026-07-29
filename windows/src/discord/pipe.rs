@@ -19,8 +19,8 @@ use serde_json::Value;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_INVALID_HANDLE, ERROR_IO_PENDING, ERROR_NO_DATA,
-    ERROR_OPERATION_ABORTED, ERROR_PIPE_NOT_CONNECTED, HANDLE, WAIT_EVENT, WAIT_OBJECT_0,
-    WAIT_TIMEOUT,
+    ERROR_OPERATION_ABORTED, ERROR_PIPE_NOT_CONNECTED, HANDLE, WAIT_EVENT, WAIT_FAILED,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, FILE_SHARE_MODE,
@@ -56,6 +56,10 @@ pub enum Wakeup {
     Timeout,
     /// Discord closed the pipe.
     Closed,
+    /// The wait itself failed — a bad handle, most likely. Reported rather than
+    /// folded into `Timeout`, because a caller that loops on it would spin a
+    /// core flat with nothing in the log.
+    Failed,
 }
 
 /// Manual-reset event, used both internally for overlapped completion and by
@@ -101,6 +105,7 @@ impl Event {
         let handles = [self.0];
         match wait_with_messages(&handles, timeout) {
             WAIT_OBJECT_0 => Wakeup::Signaled,
+            WAIT_FAILED => Wakeup::Failed,
             wait if is_message_wakeup(wait, handles.len()) => Wakeup::Message,
             _ => Wakeup::Timeout,
         }
@@ -125,12 +130,30 @@ impl Drop for Pipe {
     }
 }
 
+/// How many `discord-ipc-N` names Discord may listen on.
+pub const PIPE_SLOTS: usize = 10;
+
 impl Pipe {
     /// Tries `discord-ipc-0` through `-9` and keeps the first that opens.
     pub fn connect() -> io::Result<Self> {
+        Self::connect_from(0).map(|(pipe, _)| pipe)
+    }
+
+    /// As `connect`, but begins at `start` and wraps, reporting which slot it
+    /// settled on.
+    ///
+    /// Any local process can create `\\.\pipe\discord-ipc-0` — the namespace is
+    /// world-writable, which is inherent to Discord's IPC design. Always
+    /// restarting at 0 means one squatter (a stale instance, another RPC app, a
+    /// crashed process still holding the name) permanently hides the real
+    /// Discord on a later slot: the handshake times out, the reconnect backs
+    /// off, and the next attempt picks the very same dead pipe. Carrying the
+    /// cursor forward is what lets the search move past it.
+    pub fn connect_from(start: usize) -> io::Result<(Self, usize)> {
         let mut last_err = None;
-        for i in 0..10 {
-            let path = format!(r"\\.\pipe\discord-ipc-{i}");
+        for offset in 0..PIPE_SLOTS {
+            let index = (start + offset) % PIPE_SLOTS;
+            let path = format!(r"\\.\pipe\discord-ipc-{index}");
             let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
             let handle = unsafe {
                 CreateFileW(
@@ -145,13 +168,32 @@ impl Pipe {
             };
             match handle {
                 Ok(handle) if !handle.is_invalid() => {
-                    return Ok(Self {
-                        handle,
-                        read_event: Event::new()?,
-                        write_event: Event::new()?,
-                    });
+                    // The events are created first: `Self` is not built until
+                    // every field exists, so a `?` here would drop `handle` on
+                    // the floor without ever closing it — leaking a pipe handle
+                    // per attempt, under exactly the handle-exhaustion
+                    // conditions that made `Event::new` fail in the first place.
+                    let (read_event, write_event) = match (Event::new(), Event::new()) {
+                        (Ok(read), Ok(write)) => (read, write),
+                        (Err(e), _) | (_, Err(e)) => {
+                            unsafe {
+                                let _ = CloseHandle(handle);
+                            }
+                            return Err(e);
+                        }
+                    };
+                    return Ok((
+                        Self {
+                            handle,
+                            read_event,
+                            write_event,
+                        },
+                        index,
+                    ));
                 }
-                Ok(_) => {}
+                Ok(handle) => unsafe {
+                    let _ = CloseHandle(handle);
+                },
                 Err(e) => last_err = Some(e),
             }
         }
@@ -161,7 +203,7 @@ impl Pipe {
     }
 
     pub fn send(&self, opcode: Opcode, payload: &Value) -> io::Result<()> {
-        self.write_all(&encode_frame(opcode, payload))
+        self.write_all(&encode_frame(opcode, payload)?)
     }
 
     /// Issues an overlapped read, then waits until it completes, `extra` is
@@ -199,6 +241,17 @@ impl Pipe {
             None => 1,
         };
         let wait = wait_with_messages(&handles[..count], timeout);
+
+        if wait == WAIT_FAILED {
+            // Returns immediately and would do so again on the next pass, so
+            // this has to surface as an error rather than as a quiet timeout.
+            let err = io::Error::last_os_error();
+            unsafe {
+                let _ = CancelIo(self.handle);
+            }
+            let _ = self.finish_read(&overlapped, true);
+            return Err(err);
+        }
 
         if wait == WAIT_OBJECT_0 {
             return Ok(match self.finish_read(&overlapped, false)? {

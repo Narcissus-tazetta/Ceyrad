@@ -76,16 +76,28 @@ fn command_for(exe: &Path) -> String {
 /// unquoted while meaning the same file. Rewriting an entry that already works
 /// is harmless but pointless; the comparison exists to keep it quiet.
 fn needs_rewrite(stored: &str, wanted: &str) -> bool {
-    !unquote(stored).eq_ignore_ascii_case(unquote(wanted))
+    !executable_of(stored).eq_ignore_ascii_case(executable_of(wanted))
 }
 
-fn unquote(command: &str) -> &str {
+/// The program a `Run` command names, with any arguments left off.
+///
+/// Only the executable is compared. An entry someone edited by hand to add a
+/// switch — `"C:\apps\ceyrad.exe" --verbose` — still points at the right file,
+/// and rewriting it wholesale would silently throw their argument away.
+fn executable_of(command: &str) -> &str {
     let trimmed = command.trim();
-    trimmed
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .unwrap_or(trimmed)
-        .trim()
+    match trimmed.strip_prefix('"') {
+        // Quoted: the program is everything up to the closing quote, so a path
+        // with spaces stays in one piece.
+        Some(rest) => match rest.find('"') {
+            Some(end) => rest[..end].trim(),
+            // An unbalanced quote is not something to guess at.
+            None => rest.trim(),
+        },
+        // Unquoted: an older build wrote it, or a person did. Windows would
+        // split it at the first space, and so does this.
+        None => trimmed.split_whitespace().next().unwrap_or("").trim(),
+    }
 }
 
 /// The stored command, or `None` when there is no entry (or it is unreadable,
@@ -318,5 +330,29 @@ mod tests {
     #[test]
     fn surrounding_whitespace_is_not_drift() {
         assert!(!needs_rewrite("  \"C:\\a\\b.exe\"  ", "\"C:\\a\\b.exe\""));
+    }
+
+    #[test]
+    fn hand_added_arguments_are_not_drift() {
+        // Someone who added a switch still points the entry at this exe;
+        // rewriting it wholesale would drop their argument on the floor.
+        assert!(!needs_rewrite(
+            "\"C:\\apps\\ceyrad.exe\" --verbose",
+            "\"C:\\apps\\ceyrad.exe\""
+        ));
+    }
+
+    #[test]
+    fn a_quoted_path_with_spaces_is_read_whole() {
+        // The closing quote ends the program name, not the first space —
+        // otherwise every install under Program Files would look like drift.
+        assert!(!needs_rewrite(
+            "\"C:\\Program Files\\Ceyrad\\ceyrad.exe\"",
+            "\"C:\\Program Files\\Ceyrad\\ceyrad.exe\""
+        ));
+        assert!(needs_rewrite(
+            "\"C:\\Program Files\\Other\\ceyrad.exe\"",
+            "\"C:\\Program Files\\Ceyrad\\ceyrad.exe\""
+        ));
     }
 }

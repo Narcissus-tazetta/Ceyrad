@@ -21,3 +21,5 @@ pub mod tray;
 pub mod updater;
 #[cfg(windows)]
 pub mod winhttp;
+#[cfg(windows)]
+pub mod winrt;

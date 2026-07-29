@@ -11,7 +11,7 @@ use ceyrad::discord::protocol::{
 #[test]
 fn frame_round_trips() {
     let payload = json!({ "v": 1, "client_id": "1525381518258606130" });
-    let bytes = encode_frame(Opcode::Handshake, &payload);
+    let bytes = encode_frame(Opcode::Handshake, &payload).expect("encodes");
 
     let mut decoder = FrameDecoder::new();
     decoder.push(&bytes);
@@ -24,7 +24,7 @@ fn frame_round_trips() {
 
 #[test]
 fn header_is_little_endian_opcode_then_length() {
-    let bytes = encode_frame(Opcode::Frame, &json!({}));
+    let bytes = encode_frame(Opcode::Frame, &json!({})).expect("encodes");
     assert_eq!(&bytes[0..4], &1u32.to_le_bytes());
     assert_eq!(&bytes[4..8], &2u32.to_le_bytes()); // "{}"
     assert_eq!(&bytes[HEADER_LEN..], b"{}");
@@ -32,7 +32,7 @@ fn header_is_little_endian_opcode_then_length() {
 
 #[test]
 fn partial_frame_yields_nothing_until_complete() {
-    let bytes = encode_frame(Opcode::Frame, &json!({ "evt": "READY" }));
+    let bytes = encode_frame(Opcode::Frame, &json!({ "evt": "READY" })).expect("encodes");
     let mut decoder = FrameDecoder::new();
 
     decoder.push(&bytes[..4]);
@@ -48,8 +48,8 @@ fn partial_frame_yields_nothing_until_complete() {
 
 #[test]
 fn multiple_frames_drain_from_one_buffer() {
-    let mut bytes = encode_frame(Opcode::Ping, &json!({ "n": 1 }));
-    bytes.extend(encode_frame(Opcode::Frame, &json!({ "evt": "READY" })));
+    let mut bytes = encode_frame(Opcode::Ping, &json!({ "n": 1 })).expect("encodes");
+    bytes.extend(encode_frame(Opcode::Frame, &json!({ "evt": "READY" })).expect("encodes"));
 
     let mut decoder = FrameDecoder::new();
     decoder.push(&bytes);
@@ -177,4 +177,79 @@ fn an_unhelpful_body_falls_back_to_what_arrived() {
 
     let frame = frame_with(json!({ "evt": "ERROR" }));
     assert!(frame.error_message().contains("ERROR"));
+}
+
+#[test]
+fn a_zero_length_payload_is_a_valid_frame() {
+    // Legal on the wire, and it exercises the branch where the decoder
+    // consumes the whole buffer and clears rather than drains.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&Opcode::Pong.raw_value().to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut decoder = FrameDecoder::new();
+    decoder.push(&bytes);
+    let frame = decoder.next_frame().unwrap().expect("a frame");
+    assert_eq!(frame.opcode, Opcode::Pong);
+    assert!(frame.payload.is_empty());
+    assert!(decoder.next_frame().unwrap().is_none());
+}
+
+#[test]
+fn a_header_split_at_any_offset_still_reassembles() {
+    // The 4-byte split is already covered; a transport is free to break it
+    // anywhere, and every offset takes the `available < HEADER_LEN` path
+    // through `compact` with a different amount already buffered.
+    let bytes = encode_frame(Opcode::Frame, &json!({ "evt": "READY" })).expect("encodes");
+    for split in 1..HEADER_LEN {
+        let mut decoder = FrameDecoder::new();
+        decoder.push(&bytes[..split]);
+        assert!(decoder.next_frame().unwrap().is_none(), "split at {split}");
+        decoder.push(&bytes[split..]);
+        let frame = decoder.next_frame().unwrap().expect("a frame");
+        assert_eq!(frame.opcode, Opcode::Frame, "split at {split}");
+    }
+}
+
+#[test]
+fn the_size_limit_is_exclusive_and_does_not_preallocate() {
+    // One below the cap is accepted as a length, and the decoder waits for the
+    // body rather than reserving a megabyte on the strength of a header.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&Opcode::Frame.raw_value().to_le_bytes());
+    bytes.extend_from_slice(&(MAX_PAYLOAD_LEN - 1).to_le_bytes());
+
+    let mut decoder = FrameDecoder::new();
+    decoder.push(&bytes);
+    assert_eq!(decoder.next_frame(), Ok(None));
+}
+
+#[test]
+fn a_stream_of_frames_does_not_grow_the_buffer_without_bound() {
+    // Pushed in chunks that do not line up with frame boundaries, which is the
+    // realistic shape of pipe reads, to prove `compact` actually reclaims.
+    let one = encode_frame(Opcode::Ping, &json!({ "n": 1 })).expect("encodes");
+    let mut stream = Vec::new();
+    for _ in 0..200 {
+        stream.extend_from_slice(&one);
+    }
+
+    let mut decoder = FrameDecoder::new();
+    let mut drained = 0;
+    for chunk in stream.chunks(7) {
+        decoder.push(chunk);
+        while decoder.next_frame().unwrap().is_some() {
+            drained += 1;
+        }
+    }
+    assert_eq!(drained, 200);
+}
+
+#[test]
+fn a_data_field_that_is_not_an_object_falls_back_rather_than_failing() {
+    let frame = Frame {
+        opcode: Opcode::Close,
+        payload: br#"{"data": 5}"#.to_vec(),
+    };
+    assert!(frame.error_message().contains('5'));
 }

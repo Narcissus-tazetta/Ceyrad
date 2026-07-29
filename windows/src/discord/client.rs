@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::Value;
 use windows::Win32::Foundation::HANDLE;
 
-use super::pipe::{Pipe, Wakeup};
+use super::pipe::{Pipe, Wakeup, PIPE_SLOTS};
 use super::protocol::{
     handshake_payload, set_activity_payload, FrameDecoder, Opcode, ProtocolError,
 };
@@ -43,6 +43,13 @@ pub struct Client {
     /// means reconnecting under a different id.
     client_id: Option<&'static str>,
     nonce: u64,
+    /// The `discord-ipc-N` slot the live connection came from.
+    pipe_slot: usize,
+    /// Where the next `connect` starts looking. Advanced past the current slot
+    /// as soon as it is opened and only pulled back by a READY, so a pipe that
+    /// opens but never completes the handshake is tried once and then stepped
+    /// over rather than being picked again on every retry forever.
+    next_pipe_slot: usize,
 }
 
 impl Default for Client {
@@ -60,6 +67,8 @@ impl Client {
             state: ConnState::Disconnected,
             client_id: None,
             nonce: 0,
+            pipe_slot: 0,
+            next_pipe_slot: 0,
         }
     }
 
@@ -76,7 +85,9 @@ impl Client {
     pub fn connect(&mut self, client_id: &'static str) -> io::Result<()> {
         self.disconnect(false);
 
-        let pipe = Pipe::connect()?;
+        let (pipe, slot) = Pipe::connect_from(self.next_pipe_slot)?;
+        self.pipe_slot = slot;
+        self.next_pipe_slot = (slot + 1) % PIPE_SLOTS;
         pipe.send(Opcode::Handshake, &handshake_payload(client_id))?;
 
         self.pipe = Some(pipe);
@@ -155,8 +166,9 @@ impl Client {
                 events.push(Event::Closed);
             }
             // Someone else's business: the caller woke us to do something of
-            // its own, or to drain its message queue.
-            Wakeup::Signaled | Wakeup::Message | Wakeup::Timeout => {}
+            // its own, or to drain its message queue. `Failed` cannot arrive
+            // here — `read_or_signal` reports a failed wait as an error.
+            Wakeup::Signaled | Wakeup::Message | Wakeup::Timeout | Wakeup::Failed => {}
         }
         Ok(wakeup)
     }
@@ -180,6 +192,8 @@ impl Client {
                 Opcode::Frame => match frame.event().as_deref() {
                     Some("READY") if self.state == ConnState::Connecting => {
                         self.state = ConnState::Connected;
+                        // This slot is the real Discord; start here next time.
+                        self.next_pipe_slot = self.pipe_slot;
                         events.push(Event::Ready);
                     }
                     Some("ERROR") => events.push(Event::Error(frame.error_message())),
@@ -188,9 +202,19 @@ impl Client {
                 },
                 // Discord expects the payload echoed back verbatim.
                 Opcode::Ping => {
-                    if let Some(pipe) = &self.pipe {
-                        let json = frame.payload_json().unwrap_or(Value::Null);
-                        pipe.send(Opcode::Pong, &json)?;
+                    let json = frame.payload_json().unwrap_or(Value::Null);
+                    let sent = self
+                        .pipe
+                        .as_ref()
+                        .map(|pipe| pipe.send(Opcode::Pong, &json));
+                    // A bare `?` here would leave `state == Connected` over a
+                    // dead pipe: nothing would arm the reconnect backoff, and
+                    // every later `set_activity` would block the event loop for
+                    // the full write timeout against a pipe Discord has stopped
+                    // draining. Tear down like every other failure path does.
+                    if let Some(Err(e)) = sent {
+                        self.fail(events);
+                        return Err(e);
                     }
                 }
                 Opcode::Close => {
