@@ -14,17 +14,31 @@ on:
 permissions:
   contents: write
 
+# タグを続けて2本pushすると、2つの実行がどちらもappcast.xmlをmainへpushしようとして
+# 片方がnon-fast-forwardで落ちる。cancel-in-progress: false なので、走っている
+# リリースは中断せず順番待ちにする。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      # サードパーティのactionはコミットSHAで固定する。このジョブはcontents: writeを
+      # 持ちmainへpushもするため、可変タグ（v2 / stable）のまま使うと差し替えの影響が大きい。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # バージョン文字列は必ずenv経由でシェルに渡す。`${{ }}` をスクリプト本文へ
+      # 直接展開すると、workflow_dispatchの入力がそのままシェルとして解釈される。
       - name: Determine version
         id: vars
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RAW_VERSION="$INPUT_VERSION"
           else
             RAW_VERSION="$GITHUB_REF_NAME"
           fi
@@ -33,8 +47,9 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set version from tag
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Support/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Support/Info.plist
 
@@ -42,19 +57,24 @@ jobs:
         run: ./make-app.sh
 
       - name: Zip app bundle
-        run: ditto -c -k --sequesterRsrc --keepParent Ceyrad.app "Ceyrad-${{ steps.vars.outputs.tag }}-macos.zip"
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
+        run: ditto -c -k --sequesterRsrc --keepParent Ceyrad.app "Ceyrad-${TAG}-macos.zip"
 
       - name: Install create-dmg
         run: brew install create-dmg
 
       - name: Build DMG
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+          TAG: ${{ steps.vars.outputs.tag }}
         run: |
           chmod +x scripts/make_dmg.sh
-          ./scripts/make_dmg.sh "${{ steps.vars.outputs.version }}"
-          mv "dist/Ceyrad-v${{ steps.vars.outputs.version }}-macos.dmg" "Ceyrad-${{ steps.vars.outputs.tag }}-macos.dmg"
+          ./scripts/make_dmg.sh "$VERSION"
+          mv "dist/Ceyrad-v${VERSION}-macos.dmg" "Ceyrad-${TAG}-macos.dmg"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
           files: |
@@ -76,10 +96,11 @@ jobs:
         if: ${{ steps.sparkle.outputs.has_key == 'true' }}
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           chmod +x scripts/update_appcast.sh
-          VERSION="${{ steps.vars.outputs.version }}"
-          TAG="${{ steps.vars.outputs.tag }}"
           ZIP_ABS_PATH="$(pwd)/Ceyrad-${TAG}-macos.zip"
 
           # appcast.xmlはリリースタグではなくmainブランチで管理する。
@@ -96,7 +117,7 @@ jobs:
           ./scripts/update_appcast.sh \
             "$ZIP_ABS_PATH" \
             "$VERSION" \
-            "https://github.com/${{ github.repository }}/releases/download/${TAG}/Ceyrad-${TAG}-macos.zip"
+            "https://github.com/${REPOSITORY}/releases/download/${TAG}/Ceyrad-${TAG}-macos.zip"
 
           git add appcast.xml
           git commit -m "Update appcast.xml for ${TAG}"
@@ -110,21 +131,28 @@ jobs:
     # 先にmacOS版のジョブがリリースを作る。同じタグに追記するだけにして、
     # 2つのジョブが同時にリリースを作ろうとする競合を避ける。
     needs: build-and-release
+    # ただしmacOS側の最後のステップはappcast.xmlのmainへのpushで、これは保護設定や
+    # 並行pushで落ちうる。その時点でリリース自体は数ステップ前に作成済みなので、
+    # そこで転んだせいでWindowsバイナリだけ欠けたリリースが出るのは避ける。
+    if: ${{ !cancelled() && needs.build-and-release.result != 'cancelled' }}
     runs-on: windows-latest
     defaults:
       run:
         working-directory: windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # macOS側のジョブとは別ジョブなのでoutputsを共有できない。
       # 共有ジョブを挟むより、動作実績のあるmacOS側に手を入れないほうを選ぶ。
       - name: Determine version
         id: vars
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RAW_VERSION="$INPUT_VERSION"
           else
             RAW_VERSION="$GITHUB_REF_NAME"
           fi
@@ -133,11 +161,25 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: windows
+
+      # ci-windows.ymlはブランチへのpushとPRでしか動かない。タグpushはどちらでもない
+      # ので、リリースするコミットに対して一度もfmt/clippy/testが走らないことがある
+      # （mainに乗っていないコミットにタグを打った場合など）。ここで同じ門を通す。
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
 
       # CARGO_PKG_VERSIONがアップデート確認の比較元になるため、
       # タグのバージョンをビルド前に埋め込む。
@@ -145,23 +187,29 @@ jobs:
       # 依存クレートのバージョンに当てないため）。
       - name: Set version from tag
         shell: pwsh
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
         run: |
           $path = 'Cargo.toml'
           $content = Get-Content $path -Raw
           $pattern = [regex]::new('(?m)^version = "[^"]*"')
-          $updated = $pattern.Replace($content, 'version = "${{ steps.vars.outputs.version }}"', 1)
+          $updated = $pattern.Replace($content, "version = ""$env:VERSION""", 1)
           if ($updated -eq $content) { throw "Cargo.tomlのversion行が見つかりませんでした" }
           Set-Content $path -Value $updated -Encoding utf8 -NoNewline
 
+      # version行を書き換えた直後なので--lockedは使えない（Cargo.lockのceyradの
+      # versionと食い違う）。fmt/clippy/testは書き換え前に--lockedで通してある。
       - name: Build
         run: cargo build --release --bin ceyrad
 
       - name: Zip
         shell: pwsh
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
         run: |
           Compress-Archive `
             -Path target/release/ceyrad.exe `
-            -DestinationPath "Ceyrad-${{ steps.vars.outputs.tag }}-windows.zip"
+            -DestinationPath "Ceyrad-$env:TAG-windows.zip"
 
       # windows-latest ships Inno Setup, but that's runner-image trivia, not a
       # contract — fall back to installing it via choco (also preinstalled)
@@ -191,7 +239,7 @@ jobs:
             "Ceyrad-${{ steps.vars.outputs.tag }}-windows-setup.exe"
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
           files: |
