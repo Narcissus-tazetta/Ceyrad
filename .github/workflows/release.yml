@@ -216,6 +216,9 @@ jobs:
       # rather than let an image change silently break releases.
       - name: Build installer
         shell: pwsh
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+          TAG: ${{ steps.vars.outputs.tag }}
         run: |
           $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
           if (-not $iscc) {
@@ -231,12 +234,12 @@ jobs:
           }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found even after installing Inno Setup" }
 
-          & $iscc installer\ceyrad.iss "/DMyAppVersion=${{ steps.vars.outputs.version }}"
+          & $iscc installer\ceyrad.iss "/DMyAppVersion=$env:VERSION"
           if ($LASTEXITCODE -ne 0) { throw "ISCC.exe failed with exit code $LASTEXITCODE" }
 
           Move-Item `
-            "installer\dist\Ceyrad-Setup-${{ steps.vars.outputs.version }}.exe" `
-            "Ceyrad-${{ steps.vars.outputs.tag }}-windows-setup.exe"
+            "installer\dist\Ceyrad-Setup-$env:VERSION.exe" `
+            "Ceyrad-$env:TAG-windows-setup.exe"
 
       - name: Attach to release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
