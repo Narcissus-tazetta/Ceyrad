@@ -25,10 +25,9 @@ enum LinkType: String, CaseIterable {
     }
 
     /// リンク先に応じたボタンラベルの既定値。ユーザーが手動でラベルを変更するまではこれに追従する。
-    /// 曲ページのみ再生中のソースに応じて変わる（nil＝表示用の既定はApple Music）。
     func defaultLabel(for source: MusicSourceID?) -> String {
         switch self {
-        case .song: return source == .spotify ? "Play on Spotify" : "Play on Apple Music"
+        case .song: return "Play on Apple Music"
         case .artist: return "View Artist"
         case .album: return "View Album"
         case .custom: return "Open Link"
@@ -39,10 +38,7 @@ enum LinkType: String, CaseIterable {
 
     /// このリンク先の既定ラベルとして扱う文字列すべて。「未カスタマイズか」の判定に使う。
     var defaultLabels: [String] {
-        switch self {
-        case .song: return ["Play on Apple Music", "Play on Spotify"]
-        default: return [defaultLabel(for: nil)]
-        }
+        [defaultLabel(for: nil)]
     }
 }
 
@@ -55,7 +51,7 @@ enum BadgeLabelType: Int, CaseIterable {
 
     var displayName: String {
         switch self {
-        // Discord側の名前は接続中のクライアント（Apple Music / Spotify）に依存する
+        // Discord側の名前は接続中のクライアント（Apple Music）に依存する
         case .appName: return t("App Name", "アプリ名")
         case .artist: return t("Artist Name", "アーティスト名")
         case .track: return t("Track Name", "曲名")
@@ -69,8 +65,6 @@ final class SettingsStore {
     /// このアプリ専用のDiscord Application ID（Application名: "Apple Music"）。
     /// ユーザーが変更する必要はないため固定値とする。
     static let discordClientId = "1525381518258606130"
-    /// Spotify再生時に使うDiscord Application ID（Application名: "Spotify"）。
-    static let spotifyDiscordClientId = "1526238417845751959"
 
     private let defaults: UserDefaults
 
@@ -124,32 +118,6 @@ final class SettingsStore {
             defaults.removeObject(forKey: labelKey)
         } else {
             defaults.set(value, forKey: labelKey)
-        }
-    }
-
-    // MARK: - Music sources
-
-    /// ソース別の有効/無効。無効にしたソースは起動していても監視しない。
-    /// Spotifyの既定はオフ。Discord自体が公式のSpotify連携を持つため、本アプリでは副次的な機能として扱う。
-    func isSourceEnabled(_ source: MusicSourceID) -> Bool {
-        defaults.object(forKey: Self.sourceKey(source)) as? Bool ?? Self.defaultEnabled(source)
-    }
-
-    private static func defaultEnabled(_ source: MusicSourceID) -> Bool {
-        switch source {
-        case .appleMusic: return true
-        case .spotify: return false
-        }
-    }
-
-    func setSourceEnabled(_ source: MusicSourceID, _ enabled: Bool) {
-        defaults.set(enabled, forKey: Self.sourceKey(source))
-    }
-
-    private static func sourceKey(_ source: MusicSourceID) -> String {
-        switch source {
-        case .appleMusic: return "sourceAppleMusicEnabled"
-        case .spotify: return "sourceSpotifyEnabled"
         }
     }
 

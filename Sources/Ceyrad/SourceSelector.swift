@@ -10,62 +10,28 @@ struct SourceState {
     var lastEventUptimeNs: UInt64 = 0
 }
 
-/// 全ソースの状態。Dictionaryにしない（optional購読とボクシングを避ける）。
+/// 全ソースの状態。ソースは1つだが、AppDelegate側はMusicSourceIDで引く形を保つ。
 struct SourceStates {
     var appleMusic = SourceState()
-    var spotify = SourceState()
 
     subscript(id: MusicSourceID) -> SourceState {
-        get { id == .appleMusic ? appleMusic : spotify }
-        set {
-            switch id {
-            case .appleMusic: appleMusic = newValue
-            case .spotify: spotify = newValue
-            }
-        }
+        get { appleMusic }
+        set { appleMusic = newValue }
     }
 
-    var anyRunning: Bool { appleMusic.running || spotify.running }
+    var anyRunning: Bool { appleMusic.running }
 }
 
 /// どのソースをDiscordに表示するかの選択ロジック。純粋関数としてテスト可能にする。
 enum SourceSelector {
-    /// ポリシー:
-    /// 1. 候補 = 稼働中 && 曲あり && 停止中でない
-    /// 2. 片方だけ再生中ならそれが勝つ（一時停止側は再生側に譲る）
-    /// 3. 両方再生中なら直近にイベントを発した方
-    /// 4. どちらも再生中でなければ、表示中ソースが候補である限り維持
-    ///    （両方一時停止でプレゼンスがフリップしないためのスティッキネス）
+    /// 候補 = 稼働中 && 曲あり && 停止中でない。
+    /// 候補でなくなったら（曲が終わった、アプリが終了した等）表示を外す。
     static func selectActiveSource(
-        appleMusic: SourceState, spotify: SourceState, current: MusicSourceID?
+        appleMusic: SourceState, current: MusicSourceID?
     ) -> MusicSourceID? {
-        func isCandidate(_ s: SourceState) -> Bool {
-            s.running && s.track != nil && s.playerState != .stopped
-        }
-        let amCandidate = isCandidate(appleMusic)
-        let spCandidate = isCandidate(spotify)
-        let amPlaying = amCandidate && appleMusic.playerState == .playing
-        let spPlaying = spCandidate && spotify.playerState == .playing
-
-        func mostRecent() -> MusicSourceID {
-            spotify.lastEventUptimeNs > appleMusic.lastEventUptimeNs ? .spotify : .appleMusic
-        }
-
-        switch (amPlaying, spPlaying) {
-        case (true, false): return .appleMusic
-        case (false, true): return .spotify
-        case (true, true): return mostRecent()
-        case (false, false):
-            if let current {
-                let currentIsCandidate = current == .appleMusic ? amCandidate : spCandidate
-                if currentIsCandidate { return current }
-            }
-            switch (amCandidate, spCandidate) {
-            case (true, false): return .appleMusic
-            case (false, true): return .spotify
-            case (true, true): return mostRecent()
-            case (false, false): return nil
-            }
-        }
+        let isCandidate =
+            appleMusic.running && appleMusic.track != nil
+            && appleMusic.playerState != .stopped
+        return isCandidate ? .appleMusic : nil
     }
 }

@@ -45,7 +45,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(actionItem(t("Set Custom URL…", "カスタムURLを設定…"), #selector(editCustomURL)))
         menu.addItem(actionItem(t("Set Repository URL…", "リポジトリURLを設定…"), #selector(editRepositoryURL)))
-        menu.addItem(musicSourcesItem())
         menu.addItem(badgeLabelItem())
         menu.addItem(pauseBehaviorItem())
         menu.addItem(languageItem())
@@ -127,27 +126,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 // MARK: - Submenu builders
 
 extension MenuBarController {
-    /// 監視対象のプレイヤーを選ぶサブメニュー付き項目
-    fileprivate func musicSourcesItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: t("Music Sources", "ミュージックソース"),
-            action: nil, keyEquivalent: ""
-        )
-        let submenu = NSMenu()
-        for source in MusicSourceID.allCases {
-            let sub = NSMenuItem(
-                title: MusicSourceDescriptor.descriptor(for: source).displayName,
-                action: #selector(toggleSource(_:)), keyEquivalent: ""
-            )
-            sub.target = self
-            sub.representedObject = source
-            sub.state = settings.isSourceEnabled(source) ? .on : .off
-            submenu.addItem(sub)
-        }
-        item.submenu = submenu
-        return item
-    }
-
     /// バッジ（「〜を再生中」）に何を表示するかを選ぶサブメニュー付き項目
     private func badgeLabelItem() -> NSMenuItem {
         let item = NSMenuItem(
@@ -316,12 +294,6 @@ extension MenuBarController {
             return
         }
         settings.repositoryURL = value
-        onSettingsChanged?()
-    }
-
-    @objc private func toggleSource(_ sender: NSMenuItem) {
-        guard let source = sender.representedObject as? MusicSourceID else { return }
-        settings.setSourceEnabled(source, !settings.isSourceEnabled(source))
         onSettingsChanged?()
     }
 

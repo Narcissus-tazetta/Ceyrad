@@ -256,25 +256,16 @@ final class ActivityBuilderTests: XCTestCase {
             (appleMusic["buttons"] as? [[String: String]])?.first?["label"],
             "Play on Apple Music"
         )
-        let spotify = ActivityBuilder.build(
-            track: track(), playerState: .playing,
-            catalog: CatalogInfo(songURL: "https://open.spotify.com/track/abc"),
-            settings: settings, source: .spotify
-        )
-        XCTAssertEqual(
-            (spotify["buttons"] as? [[String: String]])?.first?["label"],
-            "Play on Spotify"
-        )
     }
 
     func testCustomButtonLabelWinsOverSourceDefault() {
         settings.button2Type = .disabled
         settings.button1Label = "My Label"
-        let spotify = ActivityBuilder.build(
+        let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: catalog(),
-            settings: settings, source: .spotify
+            settings: settings, source: .appleMusic
         )
-        XCTAssertEqual((spotify["buttons"] as? [[String: String]])?.first?["label"], "My Label")
+        XCTAssertEqual((activity["buttons"] as? [[String: String]])?.first?["label"], "My Label")
     }
 
     func testButtonLabelIsTruncatedTo32Characters() {

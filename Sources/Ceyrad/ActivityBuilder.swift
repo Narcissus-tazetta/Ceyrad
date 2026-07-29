@@ -80,7 +80,7 @@ enum ActivityBuilder {
     ) -> [[String: String]] {
         var buttons: [[String: String]] = []
         var usedURLs = Set<String>()
-        // 未カスタマイズのラベルは再生中のソースに追従する（"Play on Spotify" 等）
+        // 未カスタマイズのラベルは再生中のソースに追従する（"Play on Apple Music" 等）
         let configs: [(LinkType, String)] = [
             (settings.button1Type, settings.button1Label(for: source)),
             (settings.button2Type, settings.button2Label(for: source)),
