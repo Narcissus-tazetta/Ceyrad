@@ -17,8 +17,9 @@ the macOS menu can do is in its menu too.
 | `src/tray/` — notification-area icon, menu, dialogs | Done |
 | `src/launch_at_login.rs` — start with Windows | Done |
 | `src/updater/` — notices a newer release | Done (check only, no install) |
-| Spotify song/artist/album buttons | Not available — see [Artwork and links](#artwork-and-links) |
-| Installer, code signing | Not started — see [Installing](#installing) |
+| Spotify song/artist/album buttons | Not planned — see [Artwork and links](#artwork-and-links) |
+| `installer/` — Inno Setup installer | Done — see [Installing](#installing) |
+| Code signing | Not planned — matches the macOS build, which also ships unsigned |
 
 191 tests cover everything above that is not a platform call.
 
@@ -45,18 +46,58 @@ matching the macOS build — Discord ships its own Spotify integration.
 
 ## Installing
 
-There is no installer and no code signing certificate, so this ships as a
-portable zip: unpack `ceyrad.exe` anywhere you like and run it. SmartScreen will
-warn about an unrecognised app the first time — that is what an unsigned binary
-looks like, and there is no way around it short of a certificate.
+Every release ships two ways — pick either, they don't conflict:
+
+- **`Ceyrad-vX.Y.Z-windows-setup.exe`** — an installer built with
+  [Inno Setup](https://jrsoftware.org/isinfo.php) (`installer/ceyrad.iss`). It
+  installs to `%LOCALAPPDATA%\Programs\Ceyrad`, adds a Start Menu entry (and,
+  if ticked, a desktop shortcut), registers an uninstaller in "Add or Remove
+  Programs", and offers to launch the app when it finishes. No elevation
+  prompt: the install location, like everything else this app touches, needs
+  nothing beyond the current user's own permissions.
+- **`Ceyrad-vX.Y.Z-windows.zip`** — the portable build. Unpack `ceyrad.exe`
+  anywhere and run it; nothing is written outside `%APPDATA%\Ceyrad`.
+
+There is no code signing certificate — matching the macOS build, which also
+ships unsigned — so SmartScreen will warn about an unrecognised app the first
+time either way. That is what an unsigned binary looks like, and there is no
+way around it short of a certificate.
+
+Running the installer while an old copy is already sitting in the tray is the
+normal upgrade path, not a special case: Setup uses Restart Manager to find
+and terminate the running `ceyrad.exe` before it overwrites the file. (It has
+to force the close — the tray's message loop doesn't respond to Restart
+Manager's polite shutdown request — which is safe here because nothing is
+lost: every setting is written to `settings.json` the moment it changes, not
+on exit.) Uninstalling does the same before removing the install directory, so
+it doesn't leave a running process pointing at a deleted exe.
+
+Uninstalling removes the install directory and Start Menu entry only.
+`%APPDATA%\Ceyrad\settings.json` and any "Launch at Login" registration are
+left alone, since those are user preferences, not install artifacts — see
+below.
 
 **Launch at Login** in the menu writes a value under
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which is per-user and needs
 no elevation. It is the same entry Task Manager's Startup tab lists, so it can be
-switched off from there too and the menu will agree. Because there is no
-installer keeping anything in step, moving the exe would normally leave that
-entry pointing at nothing — so it is rewritten to the current location every time
-the app starts.
+switched off from there too and the menu will agree. The installer does not
+touch this key itself — the menu's toggle is the only thing that ever writes
+it — but moving an installed copy (or removing it without disabling the toggle
+first) would otherwise leave that entry pointing at nothing, so it is
+rewritten to the current location every time the app starts.
+
+### Building the installer locally
+
+```bash
+cargo build --release --bin ceyrad
+iscc installer\ceyrad.iss /DMyAppVersion=1.2.3
+```
+
+Needs [Inno Setup 6](https://jrsoftware.org/isdl.php) (`iscc` on `PATH`, or use
+its full path — the copy under `%LOCALAPPDATA%\Programs\Inno Setup 6` if it was
+installed per-user rather than machine-wide). Without `/DMyAppVersion`, the
+script falls back to a placeholder version, which is fine for a local test
+build but not what CI passes. Output lands in `installer\dist\`.
 
 ## Updates
 
@@ -118,13 +159,15 @@ fails outright (offline, or the API refusing) is retried after 15 seconds
 rather than costing the track its artwork for good; a lookup that simply finds
 nothing is not retried, because that is a real answer.
 
-**Spotify gets the artwork but no links.** Every URL this API returns points at
-Apple Music, and under a Spotify presence the button reads "Play on Spotify" —
-sending it to `music.apple.com` would be worse than having no button. The cover
-art is the same record either way, so that much crosses over and the song,
-artist and album buttons simply do not appear. Getting real Spotify links needs
-the macOS `SpotifyCatalogClient` ported, which in turn needs a track id SMTC
-does not report. Spotify monitoring is off by default anyway.
+**Spotify gets the artwork but no links, and that is by design, not a gap to
+close.** Every URL this API returns points at Apple Music, and under a Spotify
+presence the button reads "Play on Spotify" — sending it to `music.apple.com`
+would be worse than having no button. The cover art is the same record either
+way, so that much crosses over and the song, artist and album buttons simply do
+not appear. Real Spotify links would need a Spotify-side lookup (Web API search
+by title/artist, since SMTC never reports a track id) ported from scratch —
+skipped on purpose, since Discord already ships its own Spotify integration and
+Spotify monitoring is off by default here anyway.
 
 ### Apple Music's metadata shape
 

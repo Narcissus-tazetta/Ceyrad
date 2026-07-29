@@ -102,8 +102,9 @@ jobs:
           git commit -m "Update appcast.xml for ${TAG}"
           git push origin main
 
-  # Windows版はポータブルzip（exe単体）を同じリリースに追加する。
-  # インストーラとコード署名は未対応のため、Sparkle相当の自動更新も行わない
+  # Windows版はポータブルzip（exe単体）とInno Setupインストーラの両方を
+  # 同じリリースに追加する。コード署名は行わない方針（macOS版も無署名）。
+  # Sparkle相当の自動更新も行わない
   # （アプリ内では新しいリリースの有無だけを確認し、ブラウザで開く）。
   build-windows:
     # 先にmacOS版のジョブがリリースを作る。同じタグに追記するだけにして、
@@ -162,8 +163,37 @@ jobs:
             -Path target/release/ceyrad.exe `
             -DestinationPath "Ceyrad-${{ steps.vars.outputs.tag }}-windows.zip"
 
+      # windows-latest ships Inno Setup, but that's runner-image trivia, not a
+      # contract — fall back to installing it via choco (also preinstalled)
+      # rather than let an image change silently break releases.
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $candidates = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+            )
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y | Out-Null
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found even after installing Inno Setup" }
+
+          & $iscc installer\ceyrad.iss "/DMyAppVersion=${{ steps.vars.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC.exe failed with exit code $LASTEXITCODE" }
+
+          Move-Item `
+            "installer\dist\Ceyrad-Setup-${{ steps.vars.outputs.version }}.exe" `
+            "Ceyrad-${{ steps.vars.outputs.tag }}-windows-setup.exe"
+
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
-          files: windows/Ceyrad-${{ steps.vars.outputs.tag }}-windows.zip
+          files: |
+            windows/Ceyrad-${{ steps.vars.outputs.tag }}-windows.zip
+            windows/Ceyrad-${{ steps.vars.outputs.tag }}-windows-setup.exe
