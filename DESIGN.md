@@ -195,33 +195,8 @@ v1からの主な変更点:
 
 ---
 
-## 8. マルチソース対応（v3: Spotify）
+## 8. マルチソース対応の廃止（v3〜v4: Spotify → v5で削除）
 
-v2のApple Musicハードコードを、性能モデル（イベント駆動・ポーリングなし・非稼働時コストゼロ）を保ったまま2ソース化した。
+v3でApple Musicハードコード（v2）を2ソース化し、`MusicSourceID`（`.appleMusic` / `.spotify`）とディスクリプタで宣言的差分を、`AppDelegate`のswitchで振る舞いの差分（位置補完・カタログ解決）を吸収する設計にした。v4でSpotifyの既定を無効化（Discord本体が公式のSpotify連携を持つため副次機能扱い）。
 
-**既定はSpotifyオフ（v4）**: Discord本体が公式のSpotify連携を持つため、Ceyradとしては副次的な機能と位置づけ、`sourceSpotifyEnabled` の既定値を `false` にした（Apple Musicは `true` のまま）。無効なソースは起動していても監視しないため、既定状態ではSpotify側のDNC購読・AppleScript呼び出し・カタログ解決がいずれも発生せず、常駐コストはv2（Apple Music単独）と同等に戻る。既に明示的にトグルを操作したユーザーの保存値は変わらない（未設定時のフォールバックのみを変更）。
-
-### 設計
-
-- **プロトコルではなくenum + ディスクリプタ + 純粋関数**。`MusicSourceID`（`.appleMusic` / `.spotify`）と `MusicSourceDescriptor`（bundle ID・通知名・Discord client ID・表示名・userInfoパーサ）に宣言的な差分を寄せ、振る舞いの差分（位置補完・カタログ解決）は `AppDelegate` の `switch source` に置く。
-- **通知**: Spotifyは `com.spotify.client.PlaybackStateChanged`。userInfoに `Playback Position`（秒）と `Track ID` が含まれるため、**Apple Musicで必要なAppleScript位置補完がSpotifyでは不要**（`Duration` はミリ秒な点に注意）。
-- **カタログ**: Spotifyは `SpotifyCatalogClient`。曲URLは `Track ID` から純粋関数で生成（I/Oゼロ）。アートワークはAppleScript `artwork url`（CDN直リンク、ネットワーク不要）→ 失敗時のみoEmbed APIフォールバック。iTunes Search API（Apple Music用）は不変。
-- **AppleScript**: `SpotifyAppleScript` は初期状態取得とartwork url取得のみ。キューは `MusicAppleScript` と別（片方のプレイヤーのハングがもう片方をブロックしない）。オートメーション権限はアプリごとに別prompt。
-
-### アクティブソース選択（SourceSelector、純粋関数）
-
-1. 候補 = 稼働中 && 曲あり && 停止中でない
-2. 片方だけ再生中ならそれが勝つ（一時停止側は再生側に譲る）
-3. 両方再生中なら直近イベント側（単調時計 `lastEventUptimeNs`）
-4. どちらも再生中でなければ表示中ソースを維持（両方一時停止でのフリップ防止）
-
-### client ID切替
-
-「〜を再生中」の名称はApplication名で決まるため、ソースごとにDiscord Applicationを持つ（`discordClientId`＝Apple Music / `spotifyDiscordClientId`＝Spotify）。表示ソースが切り替わったら、ペンディング送信をキャンセル→ activityクリア→ 切断→ `pendingClientSwitch` フラグでバックオフなしに新IDで即再ハンドシェイク。切替はユーザーの再生操作起点のみで低頻度。
-
-### 性能の不変条件（v2から維持）
-
-- 両プレイヤー非稼働時: DNC購読0・ソケットなし・タイマーなし（NSWorkspace監視のみ）
-- ソース別teardown: 片方の終了はそのオブザーバと状態のみ解放。最後の1つで完全休止
-- Debouncerは共有1個（activityは常に1つ）。ソース切替時に必ずcancel
-- SpotifyのAppleScript呼び出し回数はApple Musicより少ない（位置補完なし・artworkは曲替わり時のみ+LRU）
+v5でSpotify対応そのものを削除し、Apple Music単独のv2相当の設計に戻した。`MusicSourceID`は依然として1ケースのenumとして残しており（`MusicSourceDescriptor`・`SourceStates`・`SourceSelector`の形は維持）、将来的に別ソースを足す余地はあるが、現時点で複数ソースの選択・優先度判定ロジックは全て取り除いてある（`SourceSelector.selectActiveSource`は単一ソースの候補判定のみ）。ソースの有効/無効を切り替える「Music Sources」メニューも、選ぶ対象がApple Music1つしかなくなったため削除した。
