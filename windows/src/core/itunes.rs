@@ -223,25 +223,81 @@ fn trim_suffix_ignore_case<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
     tail.eq_ignore_ascii_case(suffix).then_some(head)
 }
 
-/// Case- and width-insensitive folding, so `ＡＢＣ` and `abc` compare equal.
+/// Case-, width- and diacritic-insensitive folding, so `ＣＡＦÉ` and `cafe`
+/// compare equal.
 ///
-/// The macOS build also folds diacritics, which needs Unicode decomposition
-/// this crate has no dependency for. Both sides of every comparison come from
-/// Apple's own catalog, so the accents already agree; the fold is a safety net
-/// rather than the mechanism, and losing it only costs a tier.
+/// Unlike the macOS build, one side of every comparison here is *not* from
+/// Apple's catalog: SMTC reports whatever the local file's tags say, and for
+/// imported music those routinely disagree with the catalog on accents. A
+/// missed fold is not a lost tier but a lost match — no artwork and no catalog
+/// buttons — so the mapping is spelled out rather than pulled in as a
+/// dependency for decomposition.
 fn norm(s: &str) -> String {
     s.chars()
+        // An accent written as a separate combining mark — `e` + U+0301 rather
+        // than `é`. Both spellings reach here and must fold to the same thing.
+        .filter(|c| !matches!(*c as u32, 0x0300..=0x036F))
         .map(|c| match c as u32 {
             // Fullwidth ASCII (U+FF01–U+FF5E) onto its halfwidth twin.
             code @ 0xFF01..=0xFF5E => char::from_u32(code - 0xFEE0).unwrap_or(c),
             // Ideographic space, which width folding does not cover.
             0x3000 => ' ',
-            _ => c,
+            _ => fold_diacritic(c),
         })
         .flat_map(char::to_lowercase)
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// Precomposed Latin-1 and Latin Extended-A onto their base letters.
+///
+/// Covers the alphabets the iTunes catalog actually carries for Latin-script
+/// titles; anything outside it is left alone.
+fn fold_diacritic(c: char) -> char {
+    match c {
+        'À'..='Å' | 'Ā' | 'Ă' | 'Ą' => 'A',
+        'Æ' => 'A', // folded to its first letter, as `Æ` vs `AE` never matches anyway
+        'Ç' | 'Ć' | 'Ĉ' | 'Ċ' | 'Č' => 'C',
+        'Ď' | 'Đ' => 'D',
+        'È'..='Ë' | 'Ē' | 'Ĕ' | 'Ė' | 'Ę' | 'Ě' => 'E',
+        'Ĝ'..='Ģ' => 'G',
+        'Ĥ' | 'Ħ' => 'H',
+        'Ì'..='Ï' | 'Ĩ' | 'Ī' | 'Ĭ' | 'Į' | 'İ' => 'I',
+        'Ĵ' => 'J',
+        'Ķ' => 'K',
+        'Ĺ' | 'Ļ' | 'Ľ' | 'Ŀ' | 'Ł' => 'L',
+        'Ñ' | 'Ń' | 'Ņ' | 'Ň' | 'Ŋ' => 'N',
+        'Ò'..='Ö' | 'Ø' | 'Ō' | 'Ŏ' | 'Ő' => 'O',
+        'Ŕ' | 'Ŗ' | 'Ř' => 'R',
+        'Ś' | 'Ŝ' | 'Ş' | 'Š' => 'S',
+        'Ţ' | 'Ť' | 'Ŧ' => 'T',
+        'Ù'..='Ü' | 'Ũ' | 'Ū' | 'Ŭ' | 'Ů' | 'Ű' | 'Ų' => 'U',
+        'Ŵ' => 'W',
+        'Ý' | 'Ŷ' | 'Ÿ' => 'Y',
+        'Ź' | 'Ż' | 'Ž' => 'Z',
+        'à'..='å' | 'ā' | 'ă' | 'ą' => 'a',
+        'æ' => 'a',
+        'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => 'c',
+        'ď' | 'đ' => 'd',
+        'è'..='ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
+        'ĝ'..='ģ' => 'g',
+        'ĥ' | 'ħ' => 'h',
+        'ì'..='ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => 'i',
+        'ĵ' => 'j',
+        'ķ' => 'k',
+        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => 'l',
+        'ñ' | 'ń' | 'ņ' | 'ň' | 'ŉ' | 'ŋ' => 'n',
+        'ò'..='ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
+        'ŕ' | 'ŗ' | 'ř' => 'r',
+        'ś' | 'ŝ' | 'ş' | 'š' => 's',
+        'ţ' | 'ť' | 'ŧ' => 't',
+        'ù'..='ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => 'u',
+        'ŵ' => 'w',
+        'ý' | 'ÿ' | 'ŷ' => 'y',
+        'ź' | 'ż' | 'ž' => 'z',
+        _ => c,
+    }
 }
 
 /// Percent-encodes everything outside the unreserved set, so a term containing
@@ -389,5 +445,50 @@ mod tests {
         assert_eq!(strip_album_suffix("Brand New"), "Brand New");
         assert_eq!(strip_album_suffix("- Single"), "- Single");
         assert_eq!(strip_album_suffix("Live in Japan"), "Live in Japan");
+        // "Re-Single Album" ends in neither suffix; the hyphen inside a word
+        // must not be read as the separator.
+        assert_eq!(strip_album_suffix("Re-Single Album"), "Re-Single Album");
+    }
+
+    #[test]
+    fn an_artist_match_beats_an_earlier_name_only_one() {
+        // The whole point of the tier list: a cover version listed first must
+        // lose to the track by the artist actually playing.
+        let results = [
+            result("Song", "Cover Band", "Tribute"),
+            result("Song", "Artist", "Album"),
+        ];
+        let best = pick_best(&results, "Song", "Artist", "Album").expect("a match");
+        assert_eq!(best.artist_name.as_deref(), Some("Artist"));
+    }
+
+    #[test]
+    fn matching_ignores_case_width_and_diacritics() {
+        // One side comes from SMTC — the local file's tags — so accents and
+        // fullwidth forms routinely disagree with the catalog.
+        let results = [result("CAFE SONG", "Artist", "Album")];
+        for (name, artist) in [
+            ("ＣＡＦÉ　ＳＯＮＧ", "Ａｒｔｉｓｔ"),
+            ("café song", "artist"),
+            // The same accent spelled as a combining mark rather than as a
+            // precomposed character.
+            ("cafe\u{301} song", "artist"),
+        ] {
+            assert!(
+                pick_best(&results, name, artist, "Album").is_some(),
+                "{name:?} / {artist:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn featuring_matches_whichever_side_carries_it() {
+        let results = [result("Song", "Artist", "Album")];
+        // Catalog is plain, query carries the notation.
+        assert!(pick_best(&results, "Song (feat. Guest)", "Artist", "Album").is_some());
+
+        // And the other direction.
+        let with_feat = [result("Song feat. Guest", "Artist", "Album")];
+        assert!(pick_best(&with_feat, "Song", "Artist", "Album").is_some());
     }
 }

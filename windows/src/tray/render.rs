@@ -21,30 +21,43 @@ fn append(into: &dyn Appendable, rows: &[MenuRow]) -> muda::Result<()> {
         match row {
             // Left with the id muda generates rather than one of ours, so a
             // status line or a heading can never be mistaken for an action.
-            MenuRow::Info(text) => into.push(&MenuItem::new(text, false, None))?,
+            MenuRow::Info(text) => into.push(&MenuItem::new(escape(text), false, None))?,
             MenuRow::Separator => into.push(&PredefinedMenuItem::separator())?,
-            MenuRow::Item { label, action } => {
-                into.push(&MenuItem::with_id(action_id(*action), label, true, None))?
-            }
+            MenuRow::Item { label, action } => into.push(&MenuItem::with_id(
+                action_id(*action),
+                escape(label),
+                true,
+                None,
+            ))?,
             MenuRow::Choice {
                 label,
                 action,
                 checked,
             } => into.push(&CheckMenuItem::with_id(
                 action_id(*action),
-                label,
+                escape(label),
                 true,
                 *checked,
                 None,
             ))?,
             MenuRow::Submenu { label, rows } => {
-                let submenu = Submenu::new(label, true);
+                let submenu = Submenu::new(escape(label), true);
                 append(&submenu, rows)?;
                 into.push(&submenu)?;
             }
         }
     }
     Ok(())
+}
+
+/// Neutralises the two characters Win32 reads as markup in a menu string.
+///
+/// `&` is the mnemonic prefix and `\t` separates the accelerator column, and
+/// neither muda nor `menu_model` escapes them. Status rows interpolate track
+/// and artist names straight from whatever is playing, so "Simon & Garfunkel"
+/// otherwise loses its ampersand and underlines the G.
+fn escape(label: &str) -> String {
+    label.replace('&', "&&").replace('\t', " ")
 }
 
 trait Appendable {
@@ -67,4 +80,27 @@ impl Appendable for Submenu {
 /// muda's trait itself.
 pub fn into_context_menu(menu: Menu) -> Box<dyn ContextMenu> {
     Box::new(menu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape;
+
+    #[test]
+    fn an_ampersand_is_doubled_so_win32_shows_it() {
+        // Win32 would read the single `&` as a mnemonic prefix and underline
+        // the G instead of drawing the character.
+        assert_eq!(escape("Simon & Garfunkel"), "Simon && Garfunkel");
+        assert_eq!(escape("R&B"), "R&&B");
+    }
+
+    #[test]
+    fn a_tab_becomes_a_space_so_it_cannot_open_the_accelerator_column() {
+        assert_eq!(escape("Song\tName"), "Song Name");
+    }
+
+    #[test]
+    fn ordinary_text_is_untouched() {
+        assert_eq!(escape("Apple Music: 未起動"), "Apple Music: 未起動");
+    }
 }

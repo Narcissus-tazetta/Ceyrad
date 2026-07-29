@@ -11,6 +11,8 @@
 //! rows are rebuilt whenever the state behind them changes instead. Same
 //! result, and the work lands on state changes rather than on the click.
 
+use crate::t;
+
 use super::i18n::{t, AppLanguage};
 use super::models::MusicSourceId;
 use super::settings_model::{BadgeLabelType, LinkType, Settings, PAUSE_HIDE_CHOICES};
@@ -137,10 +139,10 @@ pub fn build_menu(input: &MenuInput) -> Vec<MenuRow> {
     // hidden behind the same wording that means "go and look".
     match input.update_available {
         Some(tag) => rows.push(MenuRow::Item {
-            label: t(
+            label: t!(
                 language,
-                &format!("Update Available: {tag}"),
-                &format!("アップデートがあります: {tag}"),
+                "Update Available: {tag}",
+                "アップデートがあります: {tag}"
             ),
             action: MenuAction::OpenReleasePage,
         }),
@@ -188,20 +190,20 @@ fn button_submenu(slot: ButtonSlot, settings: &Settings, language: AppLanguage) 
     } else {
         let label = button_label(slot, settings);
         rows.push(MenuRow::Item {
-            label: t(
+            label: t!(
                 language,
-                &format!("Change Label… (\"{label}\")"),
-                &format!("ラベルを変更…（\"{label}\"）"),
+                "Change Label… (\"{label}\")",
+                "ラベルを変更…（\"{label}\"）"
             ),
             action: MenuAction::EditButtonLabel(slot),
         });
     }
 
     MenuRow::Submenu {
-        label: t(
+        label: t!(
             language,
-            &format!("Button {number}: {type_name}"),
-            &format!("ボタン{number}: {type_name}"),
+            "Button {number}: {type_name}",
+            "ボタン{number}: {type_name}"
         ),
         rows,
     }
@@ -225,11 +227,7 @@ fn badge_submenu(settings: &Settings, language: AppLanguage) -> MenuRow {
     let current = settings.badge_label;
     let name = current.display_name(language);
     MenuRow::Submenu {
-        label: t(
-            language,
-            &format!("Status Badge: {name}"),
-            &format!("ステータスバッジ: {name}"),
-        ),
+        label: t!(language, "Status Badge: {name}", "ステータスバッジ: {name}"),
         rows: BadgeLabelType::ALL
             .into_iter()
             .map(|candidate| MenuRow::Choice {
@@ -245,11 +243,7 @@ fn pause_submenu(settings: &Settings, language: AppLanguage) -> MenuRow {
     let current = settings.pause_hide_minutes;
     let name = pause_choice_name(current, language);
     MenuRow::Submenu {
-        label: t(
-            language,
-            &format!("When Paused: {name}"),
-            &format!("一時停止時: {name}"),
-        ),
+        label: t!(language, "When Paused: {name}", "一時停止時: {name}"),
         rows: PAUSE_HIDE_CHOICES
             .into_iter()
             .map(|minutes| MenuRow::Choice {
@@ -268,21 +262,16 @@ pub fn pause_choice_name(minutes: i32, language: AppLanguage) -> String {
         -1 => t(language, "Keep Showing", "表示し続ける"),
         0 => t(language, "Hide Immediately", "すぐに消す"),
         1 => t(language, "Hide After 1 Minute", "1分後に消す"),
-        n => t(
-            language,
-            &format!("Hide After {n} Minutes"),
-            &format!("{n}分後に消す"),
-        ),
+        n => t!(language, "Hide After {n} Minutes", "{n}分後に消す"),
     }
 }
 
 fn language_submenu(current: AppLanguage) -> MenuRow {
     MenuRow::Submenu {
-        label: t(
-            current,
-            &format!("Language: {}", current.display_name()),
-            &format!("言語: {}", current.display_name()),
-        ),
+        label: {
+            let name = current.display_name();
+            t!(current, "Language: {name}", "言語: {name}")
+        },
         rows: AppLanguage::ALL
             .into_iter()
             .map(|candidate| MenuRow::Choice {
@@ -564,7 +553,7 @@ mod tests {
 
     #[test]
     fn an_unknown_id_is_rejected_rather_than_guessed() {
-        // Ids muda mints for rows we did not label — the status lines — arrive
+        // The ids muda mints for rows we did not label — the status lines — arrive
         // here too, and must not resolve to an action.
         for id in [
             "",

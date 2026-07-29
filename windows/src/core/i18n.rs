@@ -27,3 +27,19 @@ pub fn t(lang: AppLanguage, en: &str, ja: &str) -> String {
         AppLanguage::Ja => ja.to_string(),
     }
 }
+
+/// As `t`, for strings that interpolate.
+///
+/// `t(lang, &format!(…), &format!(…))` builds both sides, throws one away, then
+/// copies the survivor — three allocations to return one, on a path that runs
+/// several times a second while a player is active. This formats only the arm
+/// that is actually used.
+#[macro_export]
+macro_rules! t {
+    ($lang:expr, $en:literal, $ja:literal $(,)?) => {
+        match $lang {
+            $crate::core::i18n::AppLanguage::En => format!($en),
+            $crate::core::i18n::AppLanguage::Ja => format!($ja),
+        }
+    };
+}

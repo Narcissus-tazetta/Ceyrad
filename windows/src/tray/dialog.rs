@@ -14,6 +14,7 @@
 
 use std::cell::RefCell;
 
+use crate::app::log;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -26,6 +27,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Selects a range in an edit control. Spelled out rather than pulling in the
 /// whole common-controls binding for one constant.
 const EM_SETSEL: u32 = 0x00B1;
+
+/// Caps what an edit control will accept, in characters.
+const EM_SETLIMITTEXT: u32 = 0x00C5;
 
 /// Longest answer accepted. Comfortably past Discord's 512-character url
 /// ceiling, so the limit that matters is the one that reports a reason.
@@ -54,7 +58,7 @@ pub fn prompt(title: &str, message: &str, initial: &str) -> Option<String> {
         });
     });
 
-    let template = build_template(title, message);
+    let template = on_dword_boundary(build_template(title, message));
     let accepted = unsafe {
         DialogBoxIndirectParamW(
             None,
@@ -65,6 +69,16 @@ pub fn prompt(title: &str, message: &str, initial: &str) -> Option<String> {
         )
     };
 
+    // -1 is an outright failure and 0 an invalid parent; both would otherwise
+    // be indistinguishable from Cancel, leaving a menu item that silently does
+    // nothing forever with no clue as to why.
+    if accepted <= 0 {
+        log(&format!(
+            "dialog: could not open ({})",
+            std::io::Error::last_os_error()
+        ));
+    }
+
     PROMPT.with(|slot| {
         let prompt = slot.borrow_mut().take();
         if accepted == ID_OK as isize {
@@ -73,6 +87,25 @@ pub fn prompt(title: &str, message: &str, initial: &str) -> Option<String> {
             None
         }
     })
+}
+
+/// Re-homes the template in a buffer the system can actually read.
+///
+/// A `DLGTEMPLATE` must *start* on a DWORD boundary — the same rule
+/// `align_to_dword` already enforces for every item *inside* the buffer.
+/// `Vec<u16>` only promises two-byte alignment; that it happens to come back 8-
+/// or 16-byte aligned today is the allocator's habit, not a guarantee, and the
+/// failure mode is a dialog that silently never appears.
+fn on_dword_boundary(template: Vec<u16>) -> Vec<u32> {
+    let mut aligned = vec![0u32; template.len().div_ceil(2)];
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            template.as_ptr(),
+            aligned.as_mut_ptr().cast::<u16>(),
+            template.len(),
+        );
+    }
+    aligned
 }
 
 pub fn show_error(title: &str, message: &str) {
@@ -107,6 +140,17 @@ unsafe extern "system" fn dialog_proc(
                 // re-prompt, where the text handed back is the one that was
                 // just rejected.
                 unsafe { SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1))) };
+                // Refuse the keystrokes rather than truncating silently in
+                // `read_edit`: a cut there would also be free to land between
+                // the halves of a surrogate pair and turn it into U+FFFD.
+                unsafe {
+                    SendMessageW(
+                        edit,
+                        EM_SETLIMITTEXT,
+                        Some(WPARAM(MAX_INPUT_CHARS - 1)),
+                        Some(LPARAM(0)),
+                    )
+                };
             }
             // The tray has no window to inherit activation from, so the dialog
             // has to claim the foreground itself or it opens behind whatever
@@ -172,6 +216,10 @@ const ATOM_BUTTON: u16 = 0x0080;
 const ATOM_EDIT: u16 = 0x0081;
 const ATOM_STATIC: u16 = 0x0082;
 
+/// Stops a static control reading `&` as a mnemonic prefix. The current strings
+/// contain none, but the label is a translated sentence and one could appear.
+const SS_NOPREFIX: u32 = 0x0080;
+
 const DIALOG_WIDTH: i16 = 260;
 const MARGIN: i16 = 8;
 
@@ -199,7 +247,7 @@ fn build_template(title: &str, message: &str) -> Vec<u16> {
     let body_width = DIALOG_WIDTH - MARGIN * 2;
     push_item(
         &mut out,
-        WS_CHILD | WS_VISIBLE,
+        WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
         MARGIN,
         MARGIN,
         body_width,

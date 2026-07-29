@@ -152,3 +152,36 @@ impl SourceStates {
         self.apple_music.running || self.spotify.running
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_track_id_is_the_identity_on_its_own() {
+        // Spotify supplies a stable id; when it is there, the display strings
+        // must not participate — a re-tagged title is still the same track.
+        let mut track = TrackInfo::new("Song", "Artist", "Album");
+        track.track_id = Some("spotify:track:abc".into());
+        assert_eq!(track.identity(), "spotify:track:abc");
+    }
+
+    #[test]
+    fn without_a_track_id_the_fields_are_joined_by_a_unit_separator() {
+        // Pinned because this value gates catalog lookups and change
+        // detection: a separator that appeared inside a field would let two
+        // different tracks collide.
+        let track = TrackInfo::new("Song", "Artist", "Album");
+        assert_eq!(track.identity(), "Song\u{1F}Artist\u{1F}Album");
+
+        let empty = TrackInfo::new("Song", "", "");
+        assert_eq!(empty.identity(), "Song\u{1F}\u{1F}");
+    }
+
+    #[test]
+    fn tracks_differing_only_in_album_have_different_identities() {
+        let a = TrackInfo::new("Song", "Artist", "Album One");
+        let b = TrackInfo::new("Song", "Artist", "Album Two");
+        assert_ne!(a.identity(), b.identity());
+    }
+}

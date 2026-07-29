@@ -99,19 +99,28 @@ pub fn build(
                     .duration_since(track.position_sampled_at)
                     .map(|d| d.as_secs_f64())
                     .unwrap_or(0.0);
-                let current_position = (position + elapsed_since_sample).min(duration);
-                let now_unix = now
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs_f64())
-                    .unwrap_or(0.0);
-                let start = now_unix - current_position;
-                activity.insert(
-                    "timestamps".into(),
-                    json!({
-                        "start": (start * 1000.0).round() as i64,
-                        "end": ((start + duration) * 1000.0).round() as i64,
-                    }),
-                );
+                let current_position = position + elapsed_since_sample;
+                // Past the end there is no honest bar left to draw. Clamping
+                // instead would pin `start` to `now - duration`, so both
+                // timestamps would then slide with the wall clock and every
+                // rebuild would read as a change — a re-send against Discord's
+                // rate limit for a presence that has not moved. Reachable
+                // whenever a player reports a too-short duration, which live
+                // streams and some podcast apps do.
+                if current_position < duration {
+                    let now_unix = now
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0);
+                    let start = now_unix - current_position;
+                    activity.insert(
+                        "timestamps".into(),
+                        json!({
+                            "start": (start * 1000.0).round() as i64,
+                            "end": ((start + duration) * 1000.0).round() as i64,
+                        }),
+                    );
+                }
             }
         }
     }
@@ -239,8 +248,35 @@ pub fn is_valid_button_url(string: &str) -> bool {
     scheme == "http" || scheme == "https"
 }
 
+/// Whether `c` only exists as part of the character before it.
+///
+/// Cutting at a fixed scalar count can land in the middle of one of these — a
+/// family emoji is seven scalars joined by ZWJ — and what Discord then renders
+/// is a dangling joiner or a bare combining mark. Swift's `prefix` counts
+/// grapheme clusters and never splits one; this is the same guarantee reached
+/// from the other side, by dropping the incomplete tail.
+fn is_continuation(c: char) -> bool {
+    matches!(c,
+        '\u{200D}'                  // zero-width joiner
+        | '\u{FE0E}' | '\u{FE0F}'   // variation selectors
+        | '\u{1F3FB}'..='\u{1F3FF}' // skin-tone modifiers
+        | '\u{0300}'..='\u{036F}'   // combining diacritical marks
+        | '\u{20D0}'..='\u{20F0}'   // combining marks for symbols
+        | '\u{FE20}'..='\u{FE2F}'   // combining half marks
+        | '\u{E0020}'..='\u{E007F}' // tag characters (flag sequences)
+    )
+}
+
 fn clamp(s: &str) -> String {
     let mut value: String = s.chars().take(MAX_FIELD_CHARS).collect();
+    // Only runs when the take above actually cut something off. Stripping the
+    // trailing joiner is part of the same pass: a ZWJ only means anything
+    // between two characters, so one left at the end goes with them.
+    if s.chars().count() > MAX_FIELD_CHARS {
+        while value.chars().next_back().is_some_and(is_continuation) {
+            value.pop();
+        }
+    }
     while value.chars().count() < MIN_FIELD_CHARS {
         value.push(PAD_CHAR);
     }

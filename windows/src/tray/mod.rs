@@ -57,9 +57,13 @@ impl Tray {
     }
 }
 
-/// Drains this thread's message queue. Returns `false` once the session is
-/// ending, which is the one message the caller has to act on rather than
-/// forward.
+/// Drains this thread's message queue. Returns `false` on `WM_QUIT`.
+///
+/// Nothing in this app posts `WM_QUIT` today — the Quit row goes through
+/// `MenuAction::Quit`, and Windows *sends* `WM_QUERYENDSESSION`/`WM_ENDSESSION`
+/// at logoff rather than posting anything this loop can see. The check is kept
+/// as a guard in case a predefined Quit item is ever added, not as the shutdown
+/// path.
 ///
 /// Must run on every pass: the loop waits with `QS_ALLINPUT`, so a message
 /// left in the queue would wake it again immediately and spin.

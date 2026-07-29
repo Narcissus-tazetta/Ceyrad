@@ -1,3 +1,5 @@
+use crate::t;
+
 use super::i18n::{t, AppLanguage};
 use super::models::{ConnState, MusicSourceId, PlayerState, SourceState, TrackInfo};
 
@@ -45,18 +47,10 @@ fn source_line(source: MusicSourceId, input: &Input, mark_active: bool) -> Strin
     let name = source.display_name();
     let s = state_for(source, input);
     if !s.running {
-        return t(
-            input.language,
-            &format!("{name}: Not Running"),
-            &format!("{name}: 未起動"),
-        );
+        return t!(input.language, "{name}: Not Running", "{name}: 未起動");
     }
     let mut line = match s.player_state {
-        PlayerState::Stopped => t(
-            input.language,
-            &format!("{name}: Stopped"),
-            &format!("{name}: 停止中"),
-        ),
+        PlayerState::Stopped => t!(input.language, "{name}: Stopped", "{name}: 停止中"),
         PlayerState::Playing => format!("♪ {name}: {}", track_line(s.track.as_ref())),
         PlayerState::Paused => format!("⏸ {name}: {}", track_line(s.track.as_ref())),
     };

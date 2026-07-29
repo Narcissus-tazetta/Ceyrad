@@ -40,7 +40,10 @@ const RIM_RGB: [u8; 3] = [24, 24, 24];
 pub fn glyph_rgba(size: u32) -> Vec<u8> {
     let size = size.max(1);
     let px_per_unit = size as f32 / CANVAS;
-    let mut out = vec![0u8; (size * size * 4) as usize];
+    // Widened before multiplying: `size` is a constant at every call site
+    // today, but the product overflows u32 past 32768 and a panic here would
+    // take the tray icon with it.
+    let mut out = vec![0u8; (size as usize).pow(2) * 4];
 
     for y in 0..size {
         for x in 0..size {
@@ -57,7 +60,7 @@ pub fn glyph_rgba(size: u32) -> Vec<u8> {
                 continue;
             }
 
-            let offset = ((y * size + x) * 4) as usize;
+            let offset = ((y as usize) * (size as usize) + x as usize) * 4;
             for channel in 0..3 {
                 out[offset + channel] = mix(RIM_RGB[channel], GLYPH_RGB[channel], glyph);
             }

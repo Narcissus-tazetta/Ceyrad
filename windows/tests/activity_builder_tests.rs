@@ -96,7 +96,51 @@ fn long_strings_are_clamped_to_128_characters() {
     assert_eq!(string_field(&activity, "details").chars().count(), 128);
 }
 
+#[test]
+fn clamping_does_not_leave_a_dangling_joiner() {
+    // A family emoji is seven scalars held together by zero-width joiners, so
+    // a cut at a fixed scalar count lands inside one. What Discord would then
+    // render is a lone figure followed by a stray joiner.
+    let long = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}".repeat(40);
+    let activity = build_now(
+        &track_with(&long, "Artist", Some(50.0), Some(200.0)),
+        PlayerState::Playing,
+        None,
+        &Settings::default(),
+    );
+    let details = string_field(&activity, "details");
+    assert!(details.chars().count() <= 128);
+    assert!(!details.ends_with('\u{200D}'), "{details:?}");
+}
+
+#[test]
+fn clamping_does_not_orphan_a_combining_mark() {
+    // Same cut, spelled with a combining acute rather than a joiner.
+    let long = "e\u{301}".repeat(200);
+    let activity = build_now(
+        &track_with(&long, "Artist", Some(50.0), Some(200.0)),
+        PlayerState::Playing,
+        None,
+        &Settings::default(),
+    );
+    let details = string_field(&activity, "details");
+    assert!(details.chars().count() <= 128);
+    assert!(details.ends_with('e'), "{details:?}");
+}
+
 // MARK: - Timestamps
+
+#[test]
+fn no_timestamps_once_the_position_has_run_past_the_end() {
+    // A player reporting a too-short duration (live streams do) would
+    // otherwise pin the bar to the end, leaving `start` and `end` both sliding
+    // with the wall clock — so every rebuild would read as a change and be
+    // re-sent against Discord's rate limit for a presence that never moved.
+    let mut t = track_with("Song", "Artist", Some(500.0), Some(200.0));
+    t.position_sampled_at = SystemTime::now();
+    let activity = build_now(&t, PlayerState::Playing, None, &Settings::default());
+    assert!(!activity.contains_key("timestamps"));
+}
 
 #[test]
 fn timestamps_only_while_playing() {

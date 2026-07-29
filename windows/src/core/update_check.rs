@@ -65,7 +65,10 @@ pub fn parse_latest(body: &str) -> Option<Release> {
         return None;
     }
     let tag = latest.tag_name?;
-    let page_url = latest.html_url?;
+    // The only thing this app ever does with the answer is hand `page_url` to
+    // the shell, so it is pinned to GitHub here rather than trusted because the
+    // transport was. A release without a GitHub page is not one we can offer.
+    let page_url = latest.html_url.filter(|url| is_github_url(url))?;
     let version = strip_v(&tag).to_string();
     if version.is_empty() {
         return None;
@@ -75,6 +78,10 @@ pub fn parse_latest(body: &str) -> Option<Release> {
         version,
         page_url,
     })
+}
+
+fn is_github_url(url: &str) -> bool {
+    url.starts_with("https://github.com/")
 }
 
 /// Whether `candidate` is strictly newer than `current`.
@@ -208,11 +215,27 @@ mod tests {
             "",
             "not json",
             "{}",
-            r#"{"tag_name":"v1.0.0"}"#,    // no page to send anyone to
-            r#"{"html_url":"https://x"}"#, // no version to compare
-            r#"{"tag_name":"v","html_url":"https://x"}"#, // nothing left after the v
+            r#"{"tag_name":"v1.0.0"}"#, // no page to send anyone to
+            r#"{"html_url":"https://github.com/o/r"}"#, // no version to compare
+            r#"{"tag_name":"v","html_url":"https://github.com/o/r"}"#, // nothing after the v
         ] {
             assert_eq!(parse_latest(body), None, "{body:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_url_that_is_not_github_is_refused() {
+        // The page url is handed to the shell, so a response that redirects it
+        // somewhere else must not produce a release at all.
+        for url in [
+            "http://github.com/o/r",             // not https
+            "https://github.evil.example/o/r",   // not github.com
+            "file:///C:/Windows/System32/x.exe", // not even http
+            "ms-settings:",                      // a protocol handler
+            "\\\\attacker\\share\\payload.exe",  // a UNC path
+        ] {
+            let body = format!(r#"{{"tag_name":"v9.0.0","html_url":"{url}"}}"#);
+            assert_eq!(parse_latest(&body), None, "{url:?}");
         }
     }
 
