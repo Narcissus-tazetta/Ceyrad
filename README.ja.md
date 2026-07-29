@@ -2,7 +2,7 @@
 
 [English version is here](README.md)
 
-Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に表示するmacOSメニューバーアプリ。
+Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に表示するmacOSメニューバーアプリ。Windows版もあります → 下記の[Windows](#windows)を参照。
 
 - 曲名・アーティスト・アルバムアート・再生プログレスバーを「〜を再生中」として表示
 - ボタン最大2個（曲/アーティスト/アルバムページ、カスタムURL、リポジトリ）
@@ -70,6 +70,10 @@ Discordの仕様で、RPCのボタンは自分自身からは見えません。�
 
 **Spotifyの広告・ローカルファイルの表示が変**
 広告やローカル取り込み曲も通常の曲として表示されますが、アートワークなし・カタログ由来のボタン（曲/アーティスト/アルバム）は非表示になります。
+
+## Windows
+
+[`windows/`](windows/README.md) にWindows向けのRust移植版があります。考え方は同じ（通知領域のアイコンからDiscordのRich Presenceを駆動）で、Apple Music/Spotifyの通知の代わりにSMTCから再生中の曲を読み取ります。インストーラなしの単体`ceyrad.exe`として配布され、macOS版と同じ[Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases)に添付されます。曲/アーティスト/アルバムのカタログボタンは未実装です。機能一覧・ビルド方法・現状は[windows/README.md](windows/README.md)を参照してください。
 
 ---
 

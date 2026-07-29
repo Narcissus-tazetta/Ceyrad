@@ -2,7 +2,7 @@
 
 [日本語版はこちら](README.ja.md)
 
-A macOS menu bar app that shows the track currently playing in Apple Music as your Discord status (Rich Presence).
+A macOS menu bar app that shows the track currently playing in Apple Music as your Discord status (Rich Presence). A Windows port also exists — see [Windows](#windows) below.
 
 - Shows title, artist, album art, and a playback progress bar as "Listening to ~"
 - Up to 2 buttons (song / artist / album page, custom URL, repository)
@@ -70,6 +70,10 @@ This is why Ceyrad's Spotify source is off by default. If you turned it on and a
 
 **Spotify ads / local files look odd**
 Spotify ads and locally imported files are shown as regular tracks but without artwork, and catalog-based buttons (song/artist/album) are hidden.
+
+## Windows
+
+There's a Rust rewrite for Windows in [`windows/`](windows/README.md) — same idea (a notification-area icon driving Discord Rich Presence), reading the current track from SMTC instead of Apple Music/Spotify notifications. It ships as a portable `ceyrad.exe` with no installer, attached to the same [Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases) as the macOS build. Song/artist/album catalog buttons aren't implemented there yet — see [windows/README.md](windows/README.md) for the full feature matrix, build instructions, and status.
 
 ---
 
