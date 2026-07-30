@@ -20,19 +20,9 @@ struct MusicSourceDescriptor {
         parse: AppleMusicNotification.parse
     )
 
-    static let spotify = MusicSourceDescriptor(
-        id: .spotify,
-        bundleId: "com.spotify.client",
-        notificationName: Notification.Name("com.spotify.client.PlaybackStateChanged"),
-        discordClientId: SettingsStore.spotifyDiscordClientId,
-        displayName: "Spotify",
-        parse: SpotifyNotification.parse
-    )
-
     static func descriptor(for id: MusicSourceID) -> MusicSourceDescriptor {
         switch id {
         case .appleMusic: return .appleMusic
-        case .spotify: return .spotify
         }
     }
 }
@@ -56,33 +46,6 @@ enum AppleMusicNotification {
             positionSec: nil
         )
         if let ms = (info["Total Time"] as? NSNumber)?.doubleValue, ms > 0 {
-            track.durationSec = ms / 1000.0
-        }
-        return (state, track)
-    }
-}
-
-/// `com.spotify.client.PlaybackStateChanged` のuserInfoパース。
-/// Apple Musicと違い再生位置（秒）が通知に含まれるため、AppleScriptでの位置補完は不要。
-/// Durationはミリ秒、Playback Positionは秒で届く点に注意。
-enum SpotifyNotification {
-    static func parse(_ info: [AnyHashable: Any]) -> (PlayerState, TrackInfo?) {
-        let state: PlayerState
-        switch (info["Player State"] as? String ?? "").lowercased() {
-        case "playing": state = .playing
-        case "paused": state = .paused
-        default: state = .stopped
-        }
-        guard state != .stopped else { return (.stopped, nil) }
-        var track = TrackInfo(
-            name: info["Name"] as? String ?? "",
-            artist: info["Artist"] as? String ?? "",
-            album: info["Album"] as? String ?? "",
-            durationSec: nil,
-            positionSec: (info["Playback Position"] as? NSNumber)?.doubleValue,
-            trackId: info["Track ID"] as? String
-        )
-        if let ms = (info["Duration"] as? NSNumber)?.doubleValue, ms > 0 {
             track.durationSec = ms / 1000.0
         }
         return (state, track)

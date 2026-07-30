@@ -10,7 +10,6 @@ enum PlayerState {
 /// 振る舞いの差分（位置補完・カタログ解決）はAppDelegateのswitchに置く。
 enum MusicSourceID: CaseIterable {
     case appleMusic
-    case spotify
 }
 
 struct TrackInfo: Equatable {
@@ -23,15 +22,13 @@ struct TrackInfo: Equatable {
     /// タイムスタンプが巻き戻ってDiscordの進捗バーがリセットされて見えるため、
     /// 送信時にここからの経過分を足して補正する。
     var positionSampledAt = Date()
-    /// Spotifyの"spotify:track:xxx"。Apple Musicはnil。
-    var trackId: String?
 
     var identity: String {
-        trackId ?? "\(name)\u{1F}\(artist)\u{1F}\(album)"
+        "\(name)\u{1F}\(artist)\u{1F}\(album)"
     }
 }
 
-/// カタログ情報（Apple Music: iTunes Search API / Spotify: Track ID + artwork url）
+/// カタログ情報（iTunes Search APIの検索結果から得られるURL群）
 struct CatalogInfo {
     var songURL: String?
     var artistURL: String?

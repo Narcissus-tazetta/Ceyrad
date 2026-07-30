@@ -6,9 +6,7 @@ Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に�
 
 - 曲名・アーティスト・アルバムアート・再生プログレスバーを「〜を再生中」として表示
 - ボタン最大2個（曲/アーティスト/アルバムページ、カスタムURL、リポジトリ）
-- **Apple Music** がメインの対象。**Spotifyは副次的なオプション扱いで既定はオフ** — Discord自体が公式のSpotify連携を持っているため、あえてCeyrad側でSpotifyのステータスを出したい場合だけ「Music Sources」からオンにする
-- 両方を有効にしていて両方起動中の場合は、実際に再生している方を表示
-- **監視対象のプレイヤーが起動していないときは何もしない**（ポーリングなし・完全イベント駆動）
+- **Apple Musicが起動していないときは何もしない**（ポーリングなし・完全イベント駆動）
 
 ## 動作環境
 
@@ -26,8 +24,8 @@ Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に�
 
 ## 使い方
 
-1. Apple Music（または「Music Sources」でオンにした場合はSpotify）で曲を再生する
-2. 初回はmacOSが「Apple Musicの制御を許可しますか」（Spotifyを有効にしている場合は別途もう1回）と聞いてくるので **許可** する
+1. Apple Musicで曲を再生する
+2. 初回はmacOSが「Apple Musicの制御を許可しますか」と聞いてくるので **許可** する
    （通知に含まれない再生位置やアートワークの取得に使う。拒否してもアプリは動くが、表示できる情報が減る）
 3. Discordを起動していれば数秒でステータスに反映される。Discordを後から起動した場合も自動で検知して接続する
 
@@ -38,7 +36,6 @@ Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に�
 | ボタン1 / ボタン2 | 遷移先: 曲ページ / アーティストページ / アルバムページ / カスタムURL / リポジトリ / 無効。「ラベルを変更…」でボタンの表示文言（32文字まで）も変えられる |
 | Set Custom URL… | リンク先「カスタムURL」で使うURL |
 | Set Repository URL… | リポジトリボタンのリンク先URL |
-| Music Sources | 監視するプレイヤー: Apple Music（既定オン） / Spotify（**既定オフ**。Discordに公式のSpotify連携があるため、あえてCeyrad側で出したい場合のみオンにする）。両方を有効にしていて両方再生中なら直近に操作した方を表示し、一時停止側は再生側に譲る |
 | Status Badge | メンバーリストやDMサイドバー等の簡易バッジ「〜を再生中」に表示する内容: アプリ名 / アーティスト名 / 曲名（既定: アーティスト名） |
 | When Paused | 一時停止時の挙動: 表示継続 / 即消す / 1・3・5・10分後に消す（既定: 5分後） |
 | Launch at Login | ログイン時にCeyradを自動起動する（クリックでオン/オフ切り替え） |
@@ -65,15 +62,9 @@ Discordの仕様で、RPCのボタンは自分自身からは見えません。�
 **Discordを後から起動した**
 自動で検知して接続します（プレイヤーが再生中なら数秒でステータスが出ます）。出ない場合はメニューの「Reconnect to Discord」。
 
-**Spotifyのステータスが二重に表示される**
-これがCeyradのSpotifyソースを既定でオフにしている理由です。オンにしたうえでDiscord本体の設定でもSpotifyを連携し「Spotifyを再生ステータスとして表示」をオンにしていると、Ceyradとは別にDiscord自身もプレゼンスを出します。どちらか片方をオフにしてください（Discord側の表示か、Ceyradの「Music Sources」のSpotify）。
-
-**Spotifyの広告・ローカルファイルの表示が変**
-広告やローカル取り込み曲も通常の曲として表示されますが、アートワークなし・カタログ由来のボタン（曲/アーティスト/アルバム）は非表示になります。
-
 ## Windows
 
-[`windows/`](windows/README.md) にWindows向けのRust移植版があります。考え方は同じ（通知領域のアイコンからDiscordのRich Presenceを駆動）で、Apple Music/Spotifyの通知の代わりにSMTCから再生中の曲を読み取ります。インストーラなしの単体`ceyrad.exe`として配布され、macOS版と同じ[Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases)に添付されます。曲/アーティスト/アルバムのカタログボタンは未実装です。機能一覧・ビルド方法・現状は[windows/README.md](windows/README.md)を参照してください。
+[`windows/`](windows/README.md) にWindows向けのRust移植版があります。考え方は同じ（通知領域のアイコンからDiscordのRich Presenceを駆動）で、Apple Musicの通知の代わりにSMTCから再生中の曲を読み取ります。インストーラなしの単体`ceyrad.exe`として配布され、macOS版と同じ[Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases)に添付されます。曲/アーティスト/アルバムのカタログボタンは未実装です。機能一覧・ビルド方法・現状は[windows/README.md](windows/README.md)を参照してください。
 
 ---
 
@@ -121,7 +112,7 @@ launchctl load ~/Library/LaunchAgents/local.ceyrad.plist
 
 ### Discord Application ID
 
-Discordに接続するためのApplication IDはこのアプリ専用のものを [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) に固定で埋め込んである。「〜を再生中」の名前はApplication名で決まるため、ソースごとに1つずつ持つ: `SettingsStore.discordClientId`（名前 **Apple Music**）と `SettingsStore.spotifyDiscordClientId`（名前 **Spotify**。表示ソースが切り替わるとこのIDで接続し直す）。フォークして自分用に使う場合は、[Discord Developer Portal](https://discord.com/developers/applications) でそれぞれの名前のApplicationを作り、そのApplication IDに書き換える。
+Discordに接続するためのApplication IDはこのアプリ専用のものを [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) の`SettingsStore.discordClientId`に固定で埋め込んである。「〜を再生中」の名前はApplication名で決まる（名前 **Apple Music**）。フォークして自分用に使う場合は、[Discord Developer Portal](https://discord.com/developers/applications) でその名前のApplicationを作り、そのApplication IDに書き換える。
 
 ### テスト
 

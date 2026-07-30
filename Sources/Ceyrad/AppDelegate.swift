@@ -8,13 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notificationName: MusicSourceDescriptor.appleMusic.notificationName,
         parse: MusicSourceDescriptor.appleMusic.parse
     )
-    private let spotifyObserver = PlayerNotificationObserver(
-        notificationName: MusicSourceDescriptor.spotify.notificationName,
-        parse: MusicSourceDescriptor.spotify.parse
-    )
     private let rpc = DiscordRPCClient()
     private let itunes = ITunesSearchClient()
-    private let spotifyCatalog = SpotifyCatalogClient()
     private let debouncer = Debouncer(delay: 0.8)
     private var menuBar: MenuBarController!
     private var updaterController: SPUStandardUpdaterController!
@@ -55,9 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appleMusicObserver.onUpdate = { [weak self] state, info in
             self?.handlePlayerUpdate(source: .appleMusic, state: state, info: info)
         }
-        spotifyObserver.onUpdate = { [weak self] state, info in
-            self?.handlePlayerUpdate(source: .spotify, state: state, info: info)
-        }
         rpc.onStateChange = { [weak self] state in self?.handleRPCState(state) }
 
         lifecycle.onPlayerLaunch = { [weak self] source in self?.sourceLaunched(source) }
@@ -76,16 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rpc.shutdownSync(clearActivity: true)
     }
 
-    private func observer(for source: MusicSourceID) -> PlayerNotificationObserver {
-        source == .appleMusic ? appleMusicObserver : spotifyObserver
-    }
-
     // MARK: - Player lifecycle
 
     private func sourceLaunched(_ source: MusicSourceID) {
-        guard settings.isSourceEnabled(source), !sources[source].running else { return }
+        guard !sources[source].running else { return }
         sources[source].running = true
-        observer(for: source).start()
+        appleMusicObserver.start()
         attemptConnect()
         // 起動直後はスクリプティングに応答しないことがあるため少し待ってから初期状態を取得。
         // 通知は状態変化時にしか飛ばないため、既に再生中だった場合はこの1回が必要。
@@ -100,10 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.sources[source].running, self.sources[source].track == nil
             else { return }
-            let fetch =
-                source == .appleMusic
-                ? MusicAppleScript.currentState : SpotifyAppleScript.currentState
-            fetch { [weak self] result in
+            MusicAppleScript.currentState { [weak self] result in
                 guard let self, self.sources[source].running, self.sources[source].track == nil
                 else { return }
                 if let (state, info) = result {
@@ -117,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func sourceTerminated(_ source: MusicSourceID) {
         guard sources[source].running else { return }
-        observer(for: source).stop()
+        appleMusicObserver.stop()
         sources[source] = SourceState()
         guard sources.anyRunning else {
             // 最後のプレイヤーが終了: 全て止めて完全休止に戻す（常時接続しない）
@@ -131,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let selection = SourceSelector.selectActiveSource(
-            appleMusic: sources.appleMusic, spotify: sources.spotify, current: activeSource
+            appleMusic: sources.appleMusic, current: activeSource
         )
         if selection != activeSource {
             switchActiveSource(to: selection)
@@ -158,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let selection = SourceSelector.selectActiveSource(
-            appleMusic: sources.appleMusic, spotify: sources.spotify, current: activeSource
+            appleMusic: sources.appleMusic, current: activeSource
         )
         if selection != activeSource {
             switchActiveSource(to: selection)
@@ -173,11 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Apple Musicの通知には再生位置が含まれないため、通知発火時のみAppleScriptで補完
-    /// （ポーリングなし）。Spotifyは通知に位置が入るため補完不要。
-    /// 一時停止時も「どこで止めたか」の表示に使うため取得する。
+    /// （ポーリングなし）。一時停止時も「どこで止めたか」の表示に使うため取得する。
     /// 位置なしで先にpushしても、補完がデバウンス窓(0.8s)内に返れば送信は1回にまとまる。
     private func backfillPositionIfNeeded(source: MusicSourceID, info: TrackInfo) {
-        guard source == .appleMusic, info.positionSec == nil else { return }
+        guard info.positionSec == nil else { return }
         MusicAppleScript.playerPosition { [weak self] position in
             guard let self, let position,
                 var current = self.sources.appleMusic.track, current.identity == info.identity
@@ -191,19 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func resolveCatalog(source: MusicSourceID, for target: TrackInfo) {
-        switch source {
-        case .appleMusic:
-            guard !target.name.isEmpty else { return }
-            itunes.resolve(
-                name: target.name, artist: target.artist, album: target.album
-            ) { [weak self] result in
-                self?.applyCatalog(source: source, target: target, result: result)
-            }
-        case .spotify:
-            guard let trackId = target.trackId else { return }
-            spotifyCatalog.resolve(trackId: trackId) { [weak self] result in
-                self?.applyCatalog(source: source, target: target, result: result)
-            }
+        guard !target.name.isEmpty else { return }
+        itunes.resolve(
+            name: target.name, artist: target.artist, album: target.album
+        ) { [weak self] result in
+            self?.applyCatalog(source: source, target: target, result: result)
         }
     }
 
@@ -302,18 +278,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func settingsChanged() {
-        // ソースの有効/無効の切替を反映（無効化=終了扱い、有効化=起動中なら起動扱い）
-        for source in MusicSourceID.allCases {
-            let enabled = settings.isSourceEnabled(source)
-            if !enabled, sources[source].running {
-                sourceTerminated(source)
-            } else if enabled, !sources[source].running,
-                AppLifecycleWatcher.isRunning(
-                    bundleId: MusicSourceDescriptor.descriptor(for: source).bundleId)
-            {
-                sourceLaunched(source)
-            }
-        }
         // 一時停止タイムアウトの設定変更を反映するため、タイマーを計り直す
         cancelPauseTimer()
         updatePauseTimer()
@@ -356,8 +320,7 @@ extension AppDelegate {
         guard sources.anyRunning, rpc.state == .disconnected else { return }
         // 呼び出し時点のアクティブソースからclient IDを導出する
         // （バックオフ経由の再接続でも自動的に正しいIDになる）
-        let fallback: MusicSourceID = sources.appleMusic.running ? .appleMusic : .spotify
-        let clientId = MusicSourceDescriptor.descriptor(for: activeSource ?? fallback)
+        let clientId = MusicSourceDescriptor.descriptor(for: activeSource ?? .appleMusic)
             .discordClientId
         connectedClientId = clientId
         rpc.connect(clientId: clientId)
@@ -387,12 +350,7 @@ extension AppDelegate {
         StatusLinesBuilder.lines(
             StatusLinesBuilder.Input(
                 appleMusic: sources.appleMusic,
-                spotify: sources.spotify,
-                activeSource: activeSource,
-                appleMusicEnabled: settings.isSourceEnabled(.appleMusic),
-                spotifyEnabled: settings.isSourceEnabled(.spotify),
                 appleMusicNotAuthorized: MusicAppleScript.notAuthorized,
-                spotifyNotAuthorized: SpotifyAppleScript.notAuthorized,
                 discordState: rpc.state
             )
         )
