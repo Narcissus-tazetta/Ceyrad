@@ -193,8 +193,14 @@ jobs:
           $path = 'Cargo.toml'
           $content = Get-Content $path -Raw
           $pattern = [regex]::new('(?m)^version = "[^"]*"')
+          # 置換前後の文字列比較でマッチ有無を判定すると、たまたま既存のversionと
+          # 同じ値を設定したとき（今まさにこれが起きた: 既定値が0.1.0で、
+          # タグも0.1.0だった）誤って「置換されなかった」と判定してしまう。
+          # マッチの成否を直接見る。
+          if (-not $pattern.IsMatch($content)) {
+            throw "Cargo.tomlのversion行が見つかりませんでした"
+          }
           $updated = $pattern.Replace($content, "version = ""$env:VERSION""", 1)
-          if ($updated -eq $content) { throw "Cargo.tomlのversion行が見つかりませんでした" }
           Set-Content $path -Value $updated -Encoding utf8 -NoNewline
 
       # version行を書き換えた直後なので--lockedは使えない（Cargo.lockのceyradの
