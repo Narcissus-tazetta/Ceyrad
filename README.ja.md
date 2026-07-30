@@ -172,3 +172,7 @@ git push origin v1.0.0
 配布されるzipはad-hoc署名（Apple Developer証明書での署名・notarizeなし）のため、ダウンロードして初回起動する際はGatekeeperに「開発元を確認できません」と表示される。その場合はFinderでアプリを右クリック→「開く」から起動するか、`xattr -cr Ceyrad.app` でquarantine属性を外す。
 
 タグを打つと`Support/Info.plist`の`CFBundleShortVersionString`/`CFBundleVersion`がタグのバージョン（例: `v1.2.0` → `1.2.0`）に自動で書き換えられてからビルドされる。`SUPublicEDKey`が設定済みで`SPARKLE_PRIVATE_KEY`シークレットが登録されていれば、更新用zipの署名と[appcast.xml](#自動更新sparkle)への追記・pushも同じワークフローで行われる。
+
+## ライセンス
+
+[MIT](LICENSE)

@@ -172,3 +172,7 @@ git push origin v1.0.0
 Since the distributed zip is ad-hoc signed (no Apple Developer certificate signing or notarization), Gatekeeper will show "cannot verify developer" on first launch after downloading. In that case, right-click the app in Finder and choose "Open", or remove the quarantine attribute with `xattr -cr Ceyrad.app`.
 
 When you push a tag, `Support/Info.plist`'s `CFBundleShortVersionString`/`CFBundleVersion` are automatically rewritten to the tag's version (e.g. `v1.2.0` → `1.2.0`) before building. If `SUPublicEDKey` is set and the `SPARKLE_PRIVATE_KEY` secret is registered, signing the update zip and appending/pushing to [appcast.xml](#auto-update-sparkle) also happens in the same workflow.
+
+## License
+
+[MIT](LICENSE)
