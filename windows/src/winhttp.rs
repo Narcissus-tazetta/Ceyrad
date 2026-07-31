@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 use windows::core::{Error as WinError, Result as WinResult, HRESULT, HSTRING};
 use windows::Foundation::Uri;
 use windows::Storage::Streams::{Buffer, DataReader, IInputStream, InputStreamOptions};
-use windows::Web::Http::{HttpClient, HttpCompletionOption, HttpMethod, HttpRequestMessage};
+use windows::Web::Http::{
+    HttpClient, HttpCompletionOption, HttpMethod, HttpRequestMessage, IHttpContent,
+};
 use windows::Win32::Foundation::{ERROR_FILE_TOO_LARGE, ERROR_INVALID_DATA};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
@@ -112,7 +114,14 @@ impl Http {
         }
 
         let content = response.Content()?;
-        if let Ok(declared) = content.Headers()?.ContentLength()?.Value() {
+        // `ContentLength()` itself — not just `.Value()` — throws when the
+        // response declares no Content-Length at all, which is the common case
+        // for a chunked/gzip response (GitHub's release API, iTunes Search).
+        // Treating that the same as "no declared length" rather than
+        // propagating it was the bug: every such response made the whole
+        // request fail with a bogus S_OK-coded error, which silently broke
+        // both the update check and the artwork lookup.
+        if let Ok(declared) = declared_content_length(&content) {
             if declared > MAX_RESPONSE_BYTES {
                 return Err(too_large());
             }
@@ -127,6 +136,18 @@ impl Http {
             )
         })
     }
+}
+
+/// The `Content-Length` declared on a response body, if any.
+///
+/// `HttpContentHeaderCollection::ContentLength()` throws — not just its
+/// `.Value()` — when the header was not sent at all, rather than yielding a
+/// null `IReference<u64>`. Bundling both fallible steps behind one
+/// `WinResult` lets the caller treat "the header is missing" and "the header
+/// is present but null" the same way: as "no declared length", not as a
+/// reason to fail the whole request.
+fn declared_content_length(content: &IHttpContent) -> WinResult<u64> {
+    content.Headers()?.ContentLength()?.Value()
 }
 
 /// Reads a stream to its end, giving up past `MAX_RESPONSE_BYTES`.
