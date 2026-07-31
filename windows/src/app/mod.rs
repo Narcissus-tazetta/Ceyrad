@@ -22,7 +22,6 @@ use windows::Win32::System::Threading::SetEvent;
 
 use crate::catalog::{Outcome, Request as CatalogRequest, Resolver};
 use crate::core::activity_builder;
-use crate::core::aumid::AumidOverrides;
 use crate::core::debouncer::Debouncer;
 use crate::core::i18n::t;
 use crate::core::menu_model::{self, ButtonSlot, MenuAction};
@@ -74,7 +73,6 @@ static WAKE_HANDLE: AtomicIsize = AtomicIsize::new(0);
 
 pub struct App {
     settings: Settings,
-    overrides: AumidOverrides,
     sources: SourceStates,
     active_source: Option<MusicSourceId>,
 
@@ -112,6 +110,19 @@ pub struct App {
     /// The menu shows settings as well as status, so a change the status rows
     /// cannot express still has to reach it.
     menu_dirty: bool,
+    /// Whether anything the status rows are made of has moved since they were
+    /// last built.
+    ///
+    /// Building them allocates a `String` per row, and this loop runs several
+    /// times a second while a track plays — almost always to conclude that
+    /// nothing changed. The flag is allowed to be set when nothing did (the
+    /// cost is one wasted rebuild); it must never be clear when something has,
+    /// so everything that writes a source's `running`, `player_state` or
+    /// `track`, or moves `active_source`, sets it. The connection is covered
+    /// separately by `last_reported_conn`, which is a `Copy` scalar and can
+    /// simply be compared.
+    status_dirty: bool,
+    last_reported_conn: ConnState,
 }
 
 impl App {
@@ -136,7 +147,8 @@ impl App {
         let wake = Arc::new(WakeEvent::new()?);
         WAKE_HANDLE.store(wake.handle().0 as isize, Ordering::SeqCst);
 
-        let watcher = Watcher::new(Arc::clone(&wake)).map_err(io::Error::other)?;
+        let watcher = Watcher::new(Arc::clone(&wake), overrides, watched_sources(&settings))
+            .map_err(io::Error::other)?;
 
         // Nothing keeps the Run entry in step with a portable exe that moved, so
         // it is checked here rather than left to fail quietly at the next logon.
@@ -146,7 +158,6 @@ impl App {
 
         Ok(Self {
             settings,
-            overrides,
             sources: SourceStates::default(),
             active_source: None,
             discord: Client::new(),
@@ -170,6 +181,9 @@ impl App {
             logged_unknown_aumids: HashSet::new(),
             last_status: Vec::new(),
             menu_dirty: false,
+            // Nothing has been reported yet, so the first pass must.
+            status_dirty: true,
+            last_reported_conn: ConnState::Disconnected,
         })
     }
 
@@ -441,6 +455,7 @@ impl App {
     fn settings_changed(&mut self) {
         self.persist_settings();
         self.menu_dirty = true;
+        self.status_dirty = true;
 
         // A source that was switched off is dropped as though its session had
         // gone; one switched on is picked up by the next snapshot, which the
@@ -451,7 +466,10 @@ impl App {
                 *self.sources.get_mut(source) = SourceState::default();
             }
         }
-        self.watcher.mark_dirty();
+        // Also rebuilds the subscriptions when the enabled set moved: a source
+        // switched off should stop waking this app, not merely be ignored once
+        // it has.
+        self.watcher.set_watched(watched_sources(&self.settings));
 
         if !self.sources.any_running() {
             self.active_source = None;
@@ -493,7 +511,7 @@ impl App {
     // MARK: - Music
 
     fn handle_smtc(&mut self) {
-        let snapshot = match self.watcher.take_snapshot(&self.overrides) {
+        let snapshot = match self.watcher.take_snapshot() {
             Ok(snapshot) => snapshot,
             Err(e) => {
                 log(&format!("smtc: {e}"));
@@ -523,6 +541,9 @@ impl App {
         // track that is simply playing on.
         let mut active_changed = false;
         let mut active_track_changed = false;
+        // Anything at all moved, on any source — which is what the status rows
+        // and the menu are built from, not just the source on display.
+        let mut any_changed = false;
 
         for source in MusicSourceId::ALL {
             let incoming = self
@@ -543,11 +564,24 @@ impl App {
 
                     if !state.running {
                         log(&format!("{}: session appeared", source.display_name()));
+                        any_changed = true;
                     }
                     state.running = true;
                     state.player_state = session.player_state;
-                    state.track = session.track.clone();
-                    if !same_track {
+
+                    if same_track {
+                        // The overwhelmingly common case: the same track, a
+                        // moment later. Only the position moved, and the three
+                        // strings already held are equal to the ones on offer —
+                        // so cloning the reading over them would allocate three
+                        // times, several times a second, to change nothing.
+                        if let (Some(held), Some(incoming)) =
+                            (state.track.as_mut(), session.track.as_ref())
+                        {
+                            held.adopt_playback_from(incoming);
+                        }
+                    } else {
+                        state.track = session.track.clone();
                         state.catalog = None;
                         state.catalog_requested_for = None;
                         state.catalog_retry_at = None;
@@ -555,6 +589,10 @@ impl App {
 
                     if changed {
                         state.last_event_uptime_ns = now_ns;
+                        // A seek moves no row, but everything else here does,
+                        // and one wasted rebuild costs less than reasoning
+                        // about which is which every time a row is added.
+                        any_changed = true;
                         if Some(source) == active {
                             active_changed = true;
                             active_track_changed |= !same_track;
@@ -564,11 +602,13 @@ impl App {
                 None => {
                     if state.running {
                         log(&format!("{}: session gone", source.display_name()));
+                        any_changed = true;
                     }
                     *state = SourceState::default();
                 }
             }
         }
+        self.status_dirty |= any_changed;
 
         // Artwork and links are not in SMTC; they have to be looked up, which
         // takes a network round trip. The request goes out here and the
@@ -621,6 +661,8 @@ impl App {
             new_source.map_or("none", MusicSourceId::display_name)
         ));
         self.active_source = new_source;
+        // The rows say which source is on display, so this moves them.
+        self.status_dirty = true;
         self.cancel_debounce();
         self.cancel_pause_timer();
         self.update_pause_timer();
@@ -671,10 +713,18 @@ impl App {
             if track.name.is_empty() {
                 continue;
             }
-            let identity = track.identity();
-            if state.catalog_requested_for.as_deref() == Some(identity.as_str()) {
+            // Asked before the identity is built, not after: this is the guard
+            // that holds for the whole of a track the catalog had no answer
+            // for, so it runs on every SMTC event and must not allocate to say
+            // "already asked".
+            if state
+                .catalog_requested_for
+                .as_deref()
+                .is_some_and(|requested| track.matches_identity(requested))
+            {
                 continue;
             }
+            let identity = track.identity();
 
             let request = CatalogRequest {
                 source,
@@ -683,6 +733,15 @@ impl App {
                 artist: track.artist.clone(),
                 album: track.album.clone(),
             };
+            // Logged as it goes out, not only when it comes back: a lookup that
+            // was never asked for and one that never answered produce the same
+            // silent, art-less card, and only this line tells them apart.
+            log(&format!(
+                "{}: looking up \"{}\" by \"{}\"",
+                source.display_name(),
+                request.name,
+                request.artist
+            ));
             state.catalog_requested_for = Some(identity);
             state.catalog_retry_at = None;
             self.catalog.request(request);
@@ -697,7 +756,7 @@ impl App {
             let still_playing = state
                 .track
                 .as_ref()
-                .is_some_and(|track| track.identity() == resolved.key);
+                .is_some_and(|track| track.matches_identity(&resolved.key));
             if !still_playing {
                 continue;
             }
@@ -865,7 +924,7 @@ impl App {
         let payload = activity.clone().map(Value::Object);
         match self.discord.set_activity(payload) {
             Ok(()) => {
-                log(&format!("-> {}", describe(&activity)));
+                log(&format!("-> {}", activity_builder::describe(&activity)));
                 self.last_sent = Some(activity);
             }
             Err(e) => log(&format!("discord: send failed ({e})")),
@@ -1045,15 +1104,29 @@ impl App {
     /// current instead. The work lands on state changes, which are rarer than
     /// the SMTC events that provoke them.
     fn report_status(&mut self) {
+        // Ahead of building anything. This runs on every pass of a loop SMTC
+        // wakes several times a second, and the rows are a `Vec<String>` — so
+        // the question "could they have moved?" has to be answerable without
+        // assembling them to find out. See `status_dirty` for the invariant.
+        let conn = self.discord.state();
+        if !self.status_dirty && !self.menu_dirty && conn == self.last_reported_conn {
+            return;
+        }
+        self.status_dirty = false;
+        self.last_reported_conn = conn;
+
         let status = status_lines::Input {
             apple_music: &self.sources.apple_music,
             spotify: &self.sources.spotify,
             active_source: self.active_source,
             apple_music_enabled: self.settings.apple_music_enabled,
             spotify_enabled: self.settings.spotify_enabled,
-            discord_state: self.discord.state(),
+            discord_state: conn,
             language: self.settings.language,
         };
+        // Still compared against the last set: the flags above are allowed to
+        // be pessimistic, and a rebuild that produced the same rows must not
+        // reach the log or rebuild the menu.
         let lines = status_lines::lines(&status);
         let status_changed = lines != self.last_status;
         if !status_changed && !self.menu_dirty {
@@ -1080,12 +1153,15 @@ impl App {
     }
 }
 
-fn describe(activity: &Option<Map<String, Value>>) -> String {
-    let Some(activity) = activity else {
-        return "cleared".to_string();
-    };
-    let field = |key: &str| activity.get(key).and_then(Value::as_str).unwrap_or("");
-    format!("{} — {}", field("details"), field("state"))
+/// Which sources the watcher should subscribe to, in `MusicSourceId::index`
+/// order. Derived from `ALL` rather than written out, so a source added to the
+/// enum cannot be silently left unwatched.
+fn watched_sources(settings: &Settings) -> [bool; MusicSourceId::COUNT] {
+    let mut watched = [false; MusicSourceId::COUNT];
+    for source in MusicSourceId::ALL {
+        watched[source.index()] = settings.is_source_enabled(source);
+    }
+    watched
 }
 
 fn install_ctrl_handler() {

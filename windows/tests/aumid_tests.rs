@@ -99,6 +99,26 @@ fn an_override_wins_over_a_built_in_match() {
     );
 }
 
+/// The prefix test compares bytes rather than folding a lowercase copy of
+/// every candidate. For UTF-8 that is the same question — but only if a prefix
+/// can never end part-way through a character, which is what these pin.
+#[test]
+fn a_non_ascii_override_prefix_matches_whole_characters_only() {
+    let overrides = AumidOverrides {
+        apple_music: vec!["日本語".into()],
+        spotify: Vec::new(),
+    };
+    assert_eq!(
+        source_for_aumid("日本語版.exe", &overrides),
+        Some(MusicSourceId::AppleMusic)
+    );
+    // Shares its first two characters — six of the nine bytes — with the
+    // pattern, and must still be refused.
+    assert_eq!(source_for_aumid("日本人.exe", &overrides), None);
+    // Shorter than the pattern: there is no prefix to compare at all.
+    assert_eq!(source_for_aumid("日本", &overrides), None);
+}
+
 #[test]
 fn an_empty_override_entry_matches_nothing() {
     let overrides = AumidOverrides {

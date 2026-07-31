@@ -132,6 +132,34 @@ pub fn build(
     activity
 }
 
+/// One line saying what was sent, for the log.
+///
+/// Names the artwork explicitly. Whether `assets.large_image` made it into the
+/// payload is the one thing about a send that cannot be inferred from the card
+/// on screen — a presence with no cover art looks exactly like one whose art
+/// Discord declined to fetch — and it is the difference between a catalog
+/// problem and a Discord problem.
+pub fn describe(activity: &Option<Map<String, Value>>) -> String {
+    let Some(activity) = activity else {
+        return "cleared".to_string();
+    };
+    let field = |key: &str| activity.get(key).and_then(Value::as_str).unwrap_or("");
+    let details = field("details");
+    let state = field("state");
+    match artwork_url(activity) {
+        Some(url) => format!("{details} — {state} [art {url}]"),
+        None => format!("{details} — {state} [no art]"),
+    }
+}
+
+/// The `large_image` this activity carries, if any.
+pub fn artwork_url(activity: &Map<String, Value>) -> Option<&str> {
+    activity
+        .get("assets")?
+        .get("large_image")
+        .and_then(Value::as_str)
+}
+
 /// Drift allowed between two builds of the same unchanged playback before they
 /// count as different. Rebuilding an activity always recomputes `timestamps`
 /// from the wall clock, so byte equality never holds — but a re-send that
@@ -300,5 +328,48 @@ mod tests {
     fn clamp_truncates_to_128_chars() {
         let long = "あ".repeat(300);
         assert_eq!(clamp(&long).chars().count(), 128);
+    }
+
+    fn built(catalog: Option<&CatalogInfo>) -> Map<String, Value> {
+        build(
+            &TrackInfo::new("Brand New", "Mrs. GREEN APPLE", "Brand New - Single"),
+            PlayerState::Playing,
+            catalog,
+            &Settings::default(),
+            MusicSourceId::AppleMusic,
+            SystemTime::now(),
+        )
+    }
+
+    #[test]
+    fn describe_names_the_artwork_that_went_out() {
+        let catalog = CatalogInfo {
+            artwork_url: Some("https://is1-ssl.mzstatic.com/a/512x512bb.jpg".into()),
+            ..Default::default()
+        };
+        let line = describe(&Some(built(Some(&catalog))));
+        assert!(line.starts_with("Brand New — Mrs. GREEN APPLE"), "{line}");
+        assert!(
+            line.contains("[art https://is1-ssl.mzstatic.com/a/512x512bb.jpg]"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn describe_says_so_when_no_artwork_went_out() {
+        // The whole point: a card with no cover art and a card whose art
+        // Discord refused look identical, so the log has to tell them apart.
+        assert!(describe(&Some(built(None))).ends_with("[no art]"));
+        // A catalog hit that carried links but no image is still "no art".
+        let links_only = CatalogInfo {
+            song_url: Some("https://music.apple.com/song".into()),
+            ..Default::default()
+        };
+        assert!(describe(&Some(built(Some(&links_only)))).ends_with("[no art]"));
+    }
+
+    #[test]
+    fn describe_reports_a_cleared_presence() {
+        assert_eq!(describe(&None), "cleared");
     }
 }

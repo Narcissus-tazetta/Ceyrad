@@ -24,7 +24,23 @@ use crate::winhttp::{ComApartment, Http};
 
 /// The API is undocumented but rate limited at roughly 20 requests a minute,
 /// so requests are spaced out rather than sent as fast as tracks change.
-const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(3);
+///
+/// Four seconds, not the macOS build's three: three is 20 a minute exactly —
+/// sitting *on* an undocumented ceiling rather than under it, where any
+/// disagreement about when a minute started is a 403. The cost of the extra
+/// second is bounded and invisible: the first lookup after a quiet spell is
+/// never delayed at all, and only a second track changed within the window
+/// waits, by which time the card is already on screen without its artwork.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(4);
+
+/// How long to hold off after a request that did not complete.
+///
+/// A refusal is the API saying it has heard enough, and being offline is the
+/// network saying the same thing; answering either by resuming at full rate is
+/// how a rate limit becomes a ban. The app retries a failed track after 15
+/// seconds, so this — deliberately longer — is what decides the real pace
+/// during an outage: roughly one attempt every half minute, whoever asks.
+const FAILURE_BACKOFF: Duration = Duration::from_secs(30);
 
 /// Misses are cached too: a locally imported track is in no catalog, and
 /// without a negative entry it would be looked up again on every replay.
@@ -193,6 +209,12 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                 Outcome::Failed
             }
         };
+        if outcome == Outcome::Failed {
+            // Past the ordinary spacing, so the next attempt — this track's
+            // retry or the next track's first look — waits out the backoff
+            // rather than arriving while whatever refused us is still refusing.
+            next_allowed = Instant::now() + FAILURE_BACKOFF;
+        }
         send(&results, &wake, &request, outcome);
     }
 

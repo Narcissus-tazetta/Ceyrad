@@ -102,7 +102,14 @@ impl Http {
                 .SendRequestWithOptionAsync(&request, HttpCompletionOption::ResponseHeadersRead)?,
             REQUEST_TIMEOUT.min(remaining(deadline)),
         )?;
-        response.EnsureSuccessStatusCode()?;
+        // Not `EnsureSuccessStatusCode`, which raises an HRESULT and nothing
+        // else. The status is the whole diagnosis here: the iTunes Search API
+        // answers 403 when it decides a caller is asking too often, and in a
+        // log that only says "lookup failed" that is indistinguishable from
+        // being offline — the two want opposite fixes.
+        if !response.IsSuccessStatusCode()? {
+            return Err(status_error(response.StatusCode()?.0));
+        }
 
         let content = response.Content()?;
         if let Ok(declared) = content.Headers()?.ContentLength()?.Value() {
@@ -153,6 +160,19 @@ fn too_large() -> WinError {
     WinError::new(
         HRESULT::from_win32(ERROR_FILE_TOO_LARGE.0),
         "the response was larger than this app will read",
+    )
+}
+
+/// A refused request, carrying the status both ways it can be read.
+///
+/// `0x8019_0000 | status` is the same `HTTP_E_STATUS_*` encoding WinRT itself
+/// uses, so anything decoding the HRESULT still recognises it; the message is
+/// there because the HRESULT is what ends up in a log line, and `0x80190193`
+/// is not a thing anyone should have to convert in their head.
+fn status_error(status: i32) -> WinError {
+    WinError::new(
+        HRESULT(0x8019_0000u32 as i32 | status),
+        format!("the server answered HTTP {status}"),
     )
 }
 

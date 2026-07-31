@@ -13,10 +13,22 @@ use super::models::TrackInfo;
 pub const SEEK_THRESHOLD_SECS: f64 = 3.0;
 
 /// Whether both readings describe the same track (or both describe none).
+///
+/// Field by field rather than `a.identity() == b.identity()`, which would build
+/// and discard two `String`s every time it is asked — and it is asked for every
+/// source on every SMTC event, which is the most frequent thing this app does.
+/// The test below pins the two to the same answer.
 pub fn same_identity(a: Option<&TrackInfo>, b: Option<&TrackInfo>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => a.identity() == b.identity(),
-        (None, None) => true,
+    let (Some(a), Some(b)) = (a, b) else {
+        return a.is_none() && b.is_none();
+    };
+    match (&a.track_id, &b.track_id) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => a.name == b.name && a.artist == b.artist && a.album == b.album,
+        // One reading carries a stable id and the other does not, so `identity`
+        // would be comparing an id against a joined triple. Nothing a player
+        // mints for the first ever looks like the second, and treating a maybe
+        // as a match is the direction that shows the wrong track.
         _ => false,
     }
 }
@@ -66,6 +78,48 @@ mod tests {
         let a = TrackInfo::new("Song", "Artist", "Album");
         let b = TrackInfo::new("Song", "Artist", "Other");
         assert!(!same_identity(Some(&a), Some(&b)));
+    }
+
+    /// The property that lets `same_identity` skip building the strings: for
+    /// every pair, it must answer exactly what comparing the two identities
+    /// would have. A change to `identity` that this no longer mirrors fails
+    /// here rather than by quietly calling two tracks one.
+    #[test]
+    fn same_identity_answers_what_comparing_identities_would() {
+        fn track(name: &str, artist: &str, album: &str, id: Option<&str>) -> TrackInfo {
+            let mut track = TrackInfo::new(name, artist, album);
+            track.track_id = id.map(str::to_string);
+            track
+        }
+        let cases = [
+            track("Song", "Artist", "Album", None),
+            track("Song", "Artist", "Other", None),
+            track("Song", "Other", "Album", None),
+            track("Other", "Artist", "Album", None),
+            track("Song", "", "", None),
+            track("", "", "", None),
+            // A separator inside a field, which is the one shape the joined
+            // form is ambiguous about.
+            track("Song\u{1F}Artist", "", "Album", None),
+            track("Song", "Artist", "Album", Some("spotify:track:abc")),
+            track("Song", "Artist", "Album", Some("spotify:track:def")),
+            track("Different", "Entirely", "Here", Some("spotify:track:abc")),
+        ];
+        for a in &cases {
+            for b in &cases {
+                assert_eq!(
+                    same_identity(Some(a), Some(b)),
+                    a.identity() == b.identity(),
+                    "{a:?}\nvs\n{b:?}"
+                );
+                // And the borrowed-key form the catalog matches answers with.
+                assert_eq!(
+                    a.matches_identity(&b.identity()),
+                    a.identity() == b.identity(),
+                    "matches_identity: {a:?}\nvs\n{b:?}"
+                );
+            }
+        }
     }
 
     #[test]
