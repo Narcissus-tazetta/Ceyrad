@@ -64,7 +64,7 @@ Discordの仕様で、RPCのボタンは自分自身からは見えません。�
 
 ## Windows
 
-[`windows/`](windows/README.md) にWindows向けのRust移植版があります。考え方は同じ（通知領域のアイコンからDiscordのRich Presenceを駆動）で、Apple Musicの通知の代わりにSMTCから再生中の曲を読み取ります。単体`ceyrad.exe`（またはインストーラ）として、macOS版と同じ[Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases)に添付されます。アートワークと曲/アーティスト/アルバムのボタンは、macOS版と同じiTunes Search APIから解決します。Spotifyも監視できますが、そちらはアートワークのみです。機能一覧・ビルド方法・現状は[windows/README.md](windows/README.md)を参照してください。
+[`windows/`](windows/README.md) にWindows向けのRust移植版があります。考え方は同じ（通知領域のアイコンからDiscordのRich Presenceを駆動）で、Apple Musicの通知の代わりにSMTCから再生中の曲を読み取ります。単体`ceyrad.exe`（またはインストーラ）として、macOS版と同じ[Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases)に添付されます。アートワークと曲/アーティスト/アルバムのボタンは、macOS版と同じiTunes Search APIから解決します。機能一覧・ビルド方法・現状は[windows/README.md](windows/README.md)を参照してください。
 
 ---
 

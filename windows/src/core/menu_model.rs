@@ -6,15 +6,14 @@
 //! rather than only by opening it.
 //!
 //! macOS rebuilds its menu from scratch on every open so nothing is kept
-//! resident between them. Windows has no "about to open" hook — the shell pops
-//! the menu synchronously from the tray window's own message handler — so the
-//! rows are rebuilt whenever the state behind them changes instead. Same
-//! result, and the work lands on state changes rather than on the click.
+//! resident between them, and so does this: the click is taken as an event, the
+//! rows are built from the state as it stands, and the menu is freed again once
+//! it closes. See `tray::take_menu_request` for the part that makes a click
+//! something the event loop can act on before the menu appears.
 
 use crate::t;
 
 use super::i18n::{t, AppLanguage};
-use super::models::MusicSourceId;
 use super::settings_model::{BadgeLabelType, LinkType, Settings, PAUSE_HIDE_CHOICES};
 use super::status_lines;
 
@@ -49,7 +48,6 @@ pub enum MenuAction {
     EditButtonLabel(ButtonSlot),
     EditCustomUrl,
     EditRepositoryUrl,
-    ToggleSource(MusicSourceId),
     SetBadgeLabel(BadgeLabelType),
     SetPauseHideMinutes(i32),
     SetLanguage(AppLanguage),
@@ -116,7 +114,6 @@ pub fn build_menu(input: &MenuInput) -> Vec<MenuRow> {
         label: t(language, "Set Repository URL…", "リポジトリURLを設定…"),
         action: MenuAction::EditRepositoryUrl,
     });
-    rows.push(sources_submenu(input.settings, language));
     rows.push(badge_submenu(input.settings, language));
     rows.push(pause_submenu(input.settings, language));
     rows.push(language_submenu(language));
@@ -206,20 +203,6 @@ fn button_submenu(slot: ButtonSlot, settings: &Settings, language: AppLanguage) 
             "ボタン{number}: {type_name}"
         ),
         rows,
-    }
-}
-
-fn sources_submenu(settings: &Settings, language: AppLanguage) -> MenuRow {
-    MenuRow::Submenu {
-        label: t(language, "Music Sources", "ミュージックソース"),
-        rows: MusicSourceId::ALL
-            .into_iter()
-            .map(|source| MenuRow::Choice {
-                label: source.display_name().to_string(),
-                action: MenuAction::ToggleSource(source),
-                checked: settings.is_source_enabled(source),
-            })
-            .collect(),
     }
 }
 
@@ -314,7 +297,6 @@ pub fn action_id(action: MenuAction) -> String {
         MenuAction::EditButtonLabel(button) => format!("button{}.label", button.number()),
         MenuAction::EditCustomUrl => "url.custom".into(),
         MenuAction::EditRepositoryUrl => "url.repository".into(),
-        MenuAction::ToggleSource(source) => format!("source.{}", source_slug(source)),
         MenuAction::SetBadgeLabel(badge) => format!("badge.{}", badge_slug(badge)),
         MenuAction::SetPauseHideMinutes(minutes) => format!("pause.{minutes}"),
         MenuAction::SetLanguage(language) => format!("language.{}", language_slug(language)),
@@ -352,7 +334,6 @@ pub fn parse_action_id(id: &str) -> Option<MenuAction> {
             let link_type = link_from_slug(tail.strip_prefix("type.")?)?;
             Some(MenuAction::SetButtonType { button, link_type })
         }
-        "source" => Some(MenuAction::ToggleSource(source_from_slug(tail)?)),
         "badge" => Some(MenuAction::SetBadgeLabel(badge_from_slug(tail)?)),
         // Parsed rather than matched against the list: the choices are the
         // menu's business, and a value that is no longer offered is still a
@@ -378,19 +359,6 @@ fn link_from_slug(slug: &str) -> Option<LinkType> {
     LinkType::SELECTABLE
         .into_iter()
         .find(|candidate| link_slug(*candidate) == slug)
-}
-
-fn source_slug(source: MusicSourceId) -> &'static str {
-    match source {
-        MusicSourceId::AppleMusic => "apple_music",
-        MusicSourceId::Spotify => "spotify",
-    }
-}
-
-fn source_from_slug(slug: &str) -> Option<MusicSourceId> {
-    MusicSourceId::ALL
-        .into_iter()
-        .find(|candidate| source_slug(*candidate) == slug)
 }
 
 fn badge_slug(badge: BadgeLabelType) -> &'static str {
@@ -438,10 +406,6 @@ mod tests {
         build_menu(&MenuInput {
             status: status_lines::Input {
                 apple_music: source,
-                spotify: source,
-                active_source: None,
-                apple_music_enabled: settings.apple_music_enabled,
-                spotify_enabled: settings.spotify_enabled,
                 discord_state: ConnState::Disconnected,
                 language: settings.language,
             },
@@ -502,10 +466,6 @@ mod tests {
         let rows = menu(&settings, &source);
         let expected = status_lines::lines(&status_lines::Input {
             apple_music: &source,
-            spotify: &source,
-            active_source: None,
-            apple_music_enabled: true,
-            spotify_enabled: false,
             discord_state: ConnState::Disconnected,
             language: AppLanguage::En,
         });
@@ -634,16 +594,6 @@ mod tests {
     }
 
     #[test]
-    fn sources_show_which_are_being_watched() {
-        let rows = default_menu();
-        // Spotify is off by default: Discord ships its own integration.
-        assert_eq!(
-            checked_labels(submenu(&rows, "Music Sources")),
-            vec!["Apple Music"]
-        );
-    }
-
-    #[test]
     fn the_pause_submenu_names_behaviours_not_numbers() {
         let rows = default_menu();
         let pause = submenu(&rows, "When Paused:");
@@ -685,7 +635,6 @@ mod tests {
             })
         };
         assert!(has("ボタン1: 曲ページ"));
-        assert!(has("ミュージックソース"));
         assert!(has("一時停止時: 5分後に消す"));
         assert!(has("Ceyradを終了"));
         // Discord's own name and state stay in English on both platforms.

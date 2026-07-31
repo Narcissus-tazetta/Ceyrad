@@ -69,70 +69,26 @@ fn song_label_follows_source() {
         settings.button1_label(Some(MusicSourceId::AppleMusic)),
         "Play on Apple Music"
     );
-    assert_eq!(
-        settings.button1_label(Some(MusicSourceId::Spotify)),
-        "Play on Spotify"
-    );
     // A custom label wins regardless of source.
     settings.set_button1_label("My Label");
     assert_eq!(
-        settings.button1_label(Some(MusicSourceId::Spotify)),
+        settings.button1_label(Some(MusicSourceId::AppleMusic)),
         "My Label"
     );
-}
-
-#[test]
-fn spotify_default_label_is_not_treated_as_custom() {
-    let mut settings = Settings::default();
-    settings.set_button1_label("Play on Spotify");
-    settings.set_button1_type(LinkType::Artist);
-    assert_eq!(settings.button1_label(None), "View Artist");
-}
-
-#[test]
-fn spotify_default_label_is_cleared_on_type_change() {
-    // A stored "Play on Spotify" is still a default for the song type, so
-    // changing the link type cleans it up rather than keeping it as a custom label.
-    let mut settings: Settings =
-        serde_json::from_str(r#"{"button1_label":"Play on Spotify"}"#).expect("deserialize");
-    settings.set_button1_type(LinkType::Album);
-    assert_eq!(settings.button1_label(None), "View Album");
-}
-
-#[test]
-fn sources_enabled_by_default() {
-    // Spotify is off by default: Discord ships its own Spotify integration.
-    let settings = Settings::default();
-    assert!(settings.is_source_enabled(MusicSourceId::AppleMusic));
-    assert!(!settings.is_source_enabled(MusicSourceId::Spotify));
-}
-
-#[test]
-fn source_toggle_is_persisted_per_source() {
-    let mut settings = Settings::default();
-    settings.set_source_enabled(MusicSourceId::Spotify, true);
-    assert!(settings.is_source_enabled(MusicSourceId::Spotify));
-    assert!(settings.is_source_enabled(MusicSourceId::AppleMusic));
-    settings.set_source_enabled(MusicSourceId::Spotify, false);
-    assert!(!settings.is_source_enabled(MusicSourceId::Spotify));
 }
 
 #[test]
 fn round_trips_through_json_with_defaults_for_missing_keys() {
     let mut settings = Settings::default();
     settings.set_button1_label("My Label");
-    settings.set_source_enabled(MusicSourceId::Spotify, true);
     let encoded = serde_json::to_string(&settings).expect("serialize");
     let decoded: Settings = serde_json::from_str(&encoded).expect("deserialize");
     assert_eq!(decoded.button1_label(None), "My Label");
-    assert!(decoded.is_source_enabled(MusicSourceId::Spotify));
 
     // An empty file yields the same defaults as a fresh install.
     let empty: Settings = serde_json::from_str("{}").expect("deserialize empty");
     assert_eq!(empty.button2_type, LinkType::Repository);
     assert_eq!(empty.pause_hide_minutes, 5);
-    assert!(empty.is_source_enabled(MusicSourceId::AppleMusic));
-    assert!(!empty.is_source_enabled(MusicSourceId::Spotify));
 }
 
 // MARK: - The menu's data
@@ -183,10 +139,6 @@ fn every_link_type_declares_its_own_default_label_as_a_default() {
             "{candidate:?} would treat its own default as a customization"
         );
     }
-    // The song label varies by source, so both spellings have to count.
-    assert!(LinkType::Song
-        .default_labels()
-        .contains(&LinkType::Song.default_label(Some(MusicSourceId::Spotify))));
 }
 
 #[test]

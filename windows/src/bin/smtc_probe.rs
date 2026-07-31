@@ -1,9 +1,9 @@
 //! Milestone-2 spike: what does SMTC actually report on this machine?
 //!
 //! Prints every media session's `SourceAppUserModelId`, metadata, playback
-//! status and timeline, then watches for changes. Run it with Spotify and/or
-//! Apple Music playing to pin down the AUMIDs the real app must match on, and
-//! to confirm the units of position/duration before anything depends on them.
+//! status and timeline, then watches for changes. Run it with Apple Music
+//! playing to pin down the AUMIDs the real app must match on, and to confirm
+//! the units of position/duration before anything depends on them.
 
 #[cfg(not(windows))]
 fn main() {

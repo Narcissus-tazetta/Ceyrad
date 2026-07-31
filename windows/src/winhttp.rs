@@ -5,8 +5,9 @@
 //! costs no extra dependency. What it does not give us is a deadline, which is
 //! what `crate::winrt::join_with_timeout` is for.
 //!
-//! Shared by `catalog` and `updater`, which each own a thread that does nothing
-//! but block on one of these.
+//! Shared by `catalog`, whose thread lives as long as the app, and `updater`,
+//! which spawns one per check — both of them doing nothing but blocking on one
+//! of these.
 
 use std::time::{Duration, Instant};
 

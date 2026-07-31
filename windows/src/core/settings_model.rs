@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::i18n::{t, AppLanguage};
 use super::models::MusicSourceId;
+use super::text;
 
 pub const DEFAULT_REPOSITORY_URL: &str = "https://github.com/Narcissus-tazetta/Ceyrad";
 
@@ -46,12 +47,9 @@ impl LinkType {
 
     /// Label a button shows until the user edits it. Only the song link varies
     /// by source; `None` means "for menu display", which reads as Apple Music.
-    pub fn default_label(self, source: Option<MusicSourceId>) -> &'static str {
+    pub fn default_label(self, _source: Option<MusicSourceId>) -> &'static str {
         match self {
-            LinkType::Song => match source {
-                Some(MusicSourceId::Spotify) => "Play on Spotify",
-                _ => "Play on Apple Music",
-            },
+            LinkType::Song => "Play on Apple Music",
             LinkType::Artist => "View Artist",
             LinkType::Album => "View Album",
             LinkType::Custom => "Open Link",
@@ -64,7 +62,7 @@ impl LinkType {
     /// whether the user has customized the label.
     pub fn default_labels(self) -> &'static [&'static str] {
         match self {
-            LinkType::Song => &["Play on Apple Music", "Play on Spotify"],
+            LinkType::Song => &["Play on Apple Music"],
             LinkType::Artist => &["View Artist"],
             LinkType::Album => &["View Album"],
             LinkType::Custom => &["Open Link"],
@@ -126,10 +124,6 @@ pub struct Settings {
     pub badge_label: BadgeLabelType,
     pub pause_hide_minutes: i32,
     pub language: AppLanguage,
-    pub apple_music_enabled: bool,
-    /// Off by default: Discord ships its own Spotify integration, so Ceyrad
-    /// only drives Spotify when the user explicitly asks for it.
-    pub spotify_enabled: bool,
 }
 
 impl Default for Settings {
@@ -144,8 +138,6 @@ impl Default for Settings {
             badge_label: BadgeLabelType::Artist,
             pause_hide_minutes: 5,
             language: AppLanguage::En,
-            apple_music_enabled: true,
-            spotify_enabled: false,
         }
     }
 }
@@ -176,20 +168,6 @@ impl Settings {
     pub fn set_button2_label(&mut self, new_value: &str) {
         set_label(&mut self.button2_label, self.button2_type, new_value);
     }
-
-    pub fn is_source_enabled(&self, source: MusicSourceId) -> bool {
-        match source {
-            MusicSourceId::AppleMusic => self.apple_music_enabled,
-            MusicSourceId::Spotify => self.spotify_enabled,
-        }
-    }
-
-    pub fn set_source_enabled(&mut self, source: MusicSourceId, enabled: bool) {
-        match source {
-            MusicSourceId::AppleMusic => self.apple_music_enabled = enabled,
-            MusicSourceId::Spotify => self.spotify_enabled = enabled,
-        }
-    }
 }
 
 fn label_for(
@@ -217,10 +195,12 @@ fn set_type(stored: &mut Option<String>, old: LinkType) {
 /// An empty label, or one equal to the current type's default, is not a
 /// customization — clearing it keeps the label following the type.
 fn set_label(stored: &mut Option<String>, link_type: LinkType, new_value: &str) {
-    let value: String = new_value.chars().take(MAX_LABEL_CHARS).collect();
-    if value.is_empty() || link_type.default_labels().contains(&value.as_str()) {
+    // Cut the way `activity_builder` cuts the fields it sends, so a label that
+    // ends in an emoji does not come back from the dialog as half of one.
+    let value = text::truncate(new_value, MAX_LABEL_CHARS);
+    if value.is_empty() || link_type.default_labels().contains(&value) {
         *stored = None;
     } else {
-        *stored = Some(value);
+        *stored = Some(value.to_string());
     }
 }

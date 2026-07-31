@@ -191,8 +191,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                         &request.artist,
                         &request.album,
                     )
-                    .map(itunes::catalog_from)
-                    .and_then(|catalog| for_source(request.source, catalog));
+                    .map(itunes::catalog_from);
 
                     // Only a real answer is cached: a temporary failure must
                     // not become this track's permanent one.
@@ -236,18 +235,6 @@ impl Outcome {
             Some(catalog) => Outcome::Found(catalog),
             None => Outcome::Missing,
         }
-    }
-}
-
-/// What a source is allowed to take from an Apple Music catalog entry.
-///
-/// The links only make sense under the Apple Music presence. Spotify's buttons
-/// say "Play on Spotify"; pointing them at `music.apple.com` would be a lie, so
-/// only the cover art — which is the same record either way — crosses over.
-fn for_source(source: MusicSourceId, catalog: CatalogInfo) -> Option<CatalogInfo> {
-    match source {
-        MusicSourceId::AppleMusic => Some(catalog),
-        MusicSourceId::Spotify => itunes::artwork_only(catalog),
     }
 }
 

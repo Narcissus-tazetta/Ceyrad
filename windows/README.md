@@ -17,11 +17,10 @@ the macOS menu can do is in its menu too.
 | `src/tray/` — notification-area icon, menu, dialogs | Done |
 | `src/launch_at_login.rs` — start with Windows | Done |
 | `src/updater/` — notices a newer release | Done (check only, no install) |
-| Spotify song/artist/album buttons | Not planned — see [Artwork and links](#artwork-and-links) |
 | `installer/` — Inno Setup installer | Done — see [Installing](#installing) |
 | Code signing | Not planned — matches the macOS build, which also ships unsigned |
 
-197 tests cover everything above that is not a platform call.
+190 tests cover everything above that is not a platform call.
 
 ## Running it
 
@@ -41,8 +40,7 @@ There are two binaries, the same orchestrator either way:
 
 Settings live in `%APPDATA%\Ceyrad\settings.json`, written by the menu as you
 change things. The file is plain JSON and can be edited by hand instead; missing
-keys fall back to defaults, so a partial file is fine. Spotify is off by default,
-matching the macOS build — Discord ships its own Spotify integration.
+keys fall back to defaults, so a partial file is fine.
 
 ## Installing
 
@@ -106,6 +104,10 @@ it against this build. When one is newer, the row becomes **Update Available:
 vX.Y.Z** and clicking it opens the release page in your browser. It also checks
 once shortly after launch and then daily, matching the macOS build's schedule.
 
+The check gets a thread only while it is running: twice on a good day, with
+nothing carried between runs, so there is no worker parked on a channel holding
+a COM apartment and an HTTP client open for the other 24 hours.
+
 It stops at telling you. macOS uses Sparkle to download and swap the app in
 place, which works because that build is signed; there is no certificate here, so
 an automatic replace would be handing you an unsigned binary with nothing to
@@ -138,6 +140,13 @@ the status rows are rebuilt only when something they are made of moved; and a
 reading of a track already playing is folded into the one already held rather
 than replacing it. What is left on the 280ms path is two property reads and no
 allocation to speak of.
+
+**The menu exists only while it is open.** The rows are built from the state as
+it stands at the click, shown, and freed again when it closes — the same thing
+macOS does in `menuNeedsUpdate`, and the reason a track change costs two strings
+and a comparison rather than a rebuilt menu. Reading whether the app is set to
+start with Windows is part of that too, so that registry lookup happens once per
+open rather than once per song.
 
 Opening the menu runs a nested message loop for as long as it is on screen, so
 player and Discord events are noticed late rather than promptly while it is
@@ -179,16 +188,6 @@ fails outright (offline, or the API refusing) is retried after 15 seconds
 rather than costing the track its artwork for good; a lookup that simply finds
 nothing is not retried, because that is a real answer.
 
-**Spotify gets the artwork but no links, and that is by design, not a gap to
-close.** Every URL this API returns points at Apple Music, and under a Spotify
-presence the button reads "Play on Spotify" — sending it to `music.apple.com`
-would be worse than having no button. The cover art is the same record either
-way, so that much crosses over and the song, artist and album buttons simply do
-not appear. Real Spotify links would need a Spotify-side lookup (Web API search
-by title/artist, since SMTC never reports a track id) ported from scratch —
-skipped on purpose, since Discord already ships its own Spotify integration and
-Spotify monitoring is off by default here anyway.
-
 ### Apple Music's metadata shape
 
 Apple Music for Windows leaves SMTC's `AlbumTitle` empty and packs the album
@@ -217,8 +216,8 @@ This is how to find the AUMID for an install the dev build does not recognise.
 cargo run --bin smtc_probe
 ```
 
-Start playback in Spotify and/or Apple Music first, then play, pause and skip
-while it watches. Worth capturing:
+Start playback in Apple Music first, then play, pause and skip while it
+watches. Worth capturing:
 
 - the exact `AUMID:` line for each player (copy verbatim)
 - whether `position` in seconds matches the elapsed time the player shows
@@ -233,10 +232,8 @@ test activity, then clears it after 60 seconds.
 
 ```bash
 cargo run --bin discord_probe
-# or, to test the Spotify application id:
-cargo run --bin discord_probe spotify
 # or with a particular artwork url:
-cargo run --bin discord_probe apple-music https://example.com/cover.jpg
+cargo run --bin discord_probe https://example.com/cover.jpg
 ```
 
 Discord must be running. Buttons and the "Listening to" status are not visible

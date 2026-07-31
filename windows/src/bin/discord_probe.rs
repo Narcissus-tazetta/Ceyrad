@@ -11,7 +11,7 @@
 //! lookup involved, so a thumbnail here means the Discord half works and the
 //! problem is upstream in `catalog`.
 //!
-//! Usage: `cargo run --bin discord_probe [apple-music|spotify] [artwork-url]`
+//! Usage: `cargo run --bin discord_probe [artwork-url]`
 
 #[cfg(not(windows))]
 fn main() {
@@ -69,12 +69,9 @@ mod imp {
     }
 
     pub fn run() -> io::Result<()> {
-        let source = match std::env::args().nth(1).as_deref() {
-            Some("spotify") => MusicSourceId::Spotify,
-            _ => MusicSourceId::AppleMusic,
-        };
+        let source = MusicSourceId::AppleMusic;
         let client_id = source.discord_client_id();
-        let artwork = std::env::args().nth(2).unwrap_or_else(|| {
+        let artwork = std::env::args().nth(1).unwrap_or_else(|| {
             // Not a lookup: the point is to take the catalog out of the picture
             // entirely, so a missing thumbnail can only be Discord's doing.
             SAMPLE_ARTWORK.to_string()

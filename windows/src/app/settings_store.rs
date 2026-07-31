@@ -19,7 +19,6 @@ const FILE_NAME: &str = "settings.json";
 
 /// Comma-separated AUMIDs, for installs whose ids we do not recognise yet.
 const ENV_APPLE_MUSIC_AUMID: &str = "CEYRAD_AUMID_APPLE_MUSIC";
-const ENV_SPOTIFY_AUMID: &str = "CEYRAD_AUMID_SPOTIFY";
 
 pub fn settings_path() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA")?;
@@ -112,7 +111,6 @@ fn temp_sibling(path: &Path) -> PathBuf {
 pub fn aumid_overrides_from_env() -> AumidOverrides {
     AumidOverrides {
         apple_music: split_env(ENV_APPLE_MUSIC_AUMID),
-        spotify: split_env(ENV_SPOTIFY_AUMID),
     }
 }
 
@@ -130,7 +128,6 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
-    use crate::core::models::MusicSourceId;
     use crate::core::settings_model::LinkType;
 
     /// A directory of this test's own, since these touch the real filesystem.
@@ -151,7 +148,6 @@ mod tests {
         let mut settings = Settings::default();
         settings.set_button1_type(LinkType::Album);
         settings.set_button2_label("My Label");
-        settings.set_source_enabled(MusicSourceId::Spotify, true);
         settings.pause_hide_minutes = 10;
 
         save_to(&path, &settings).expect("save");
@@ -160,7 +156,6 @@ mod tests {
         assert!(warning.is_none(), "{warning:?}");
         assert_eq!(loaded.button1_type, LinkType::Album);
         assert_eq!(loaded.button2_label(None), "My Label");
-        assert!(loaded.is_source_enabled(MusicSourceId::Spotify));
         assert_eq!(loaded.pause_hide_minutes, 10);
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());

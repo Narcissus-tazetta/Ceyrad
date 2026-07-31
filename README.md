@@ -64,7 +64,7 @@ It's detected automatically and connects (if a player is running, the status app
 
 ## Windows
 
-There's a Rust rewrite for Windows in [`windows/`](windows/README.md) — same idea (a notification-area icon driving Discord Rich Presence), reading the current track from SMTC instead of Apple Music notifications. It ships as a portable `ceyrad.exe` (or an installer) attached to the same [Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases) as the macOS build. Artwork and the song/artist/album buttons come from the same iTunes Search API this build uses; Spotify is watched too, but gets only the artwork — see [windows/README.md](windows/README.md) for the full feature matrix, build instructions, and status.
+There's a Rust rewrite for Windows in [`windows/`](windows/README.md) — same idea (a notification-area icon driving Discord Rich Presence), reading the current track from SMTC instead of Apple Music notifications. It ships as a portable `ceyrad.exe` (or an installer) attached to the same [Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases) as the macOS build. Artwork and the song/artist/album buttons come from the same iTunes Search API this build uses — see [windows/README.md](windows/README.md) for the full feature matrix, build instructions, and status.
 
 ---
 

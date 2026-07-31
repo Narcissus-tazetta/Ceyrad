@@ -10,6 +10,13 @@
 //! than promptly while the user has it open. Nothing is lost: the events that
 //! drive this app are kernel handles and flags that stay set until read. macOS
 //! has the same property while a menu or a modal alert is up.
+//!
+//! The menu is built when it is asked for and destroyed again when it closes,
+//! which is what macOS's `menuNeedsUpdate` does and the reason nothing about
+//! the menu is resident between opens. `tray-icon` would otherwise pop a menu
+//! handed to it in advance, straight from its own window procedure with no hook
+//! to run first — so both of its automatic click-to-open paths are turned off
+//! and the click is taken as an event instead.
 
 pub mod dialog;
 mod render;
@@ -17,7 +24,7 @@ mod render;
 use std::io;
 
 use muda::MenuEvent;
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE, WM_QUIT,
 };
@@ -40,21 +47,57 @@ impl Tray {
         let icon = TrayIconBuilder::new()
             .with_icon(glyph)
             .with_tooltip("Ceyrad")
-            // Left click opens the menu too: with no window to bring forward,
-            // there is nothing else for it to usefully do.
-            .with_menu_on_left_click(true)
+            // Both clicks open the menu — with no window to bring forward there
+            // is nothing else for a left click to usefully do — but neither is
+            // left to the crate, which would show whatever menu it was given
+            // last. `take_menu_request` turns the click into an open instead.
+            .with_menu_on_left_click(false)
+            .with_menu_on_right_click(false)
             .build()
             .map_err(io::Error::other)?;
         Ok(Self { icon })
     }
 
-    /// Replaces the menu wholesale. Called when the state behind it changes,
-    /// which is the Windows stand-in for macOS rebuilding on every open.
-    pub fn set_menu(&self, rows: &[MenuRow]) -> io::Result<()> {
+    /// Builds these rows into a real menu and pops it at the icon.
+    ///
+    /// Does not return until the menu closes: `TrackPopupMenu` runs its own
+    /// message loop. The menu stays attached afterwards because the chosen item
+    /// arrives as a `WM_COMMAND` posted to the tray window — `release_menu` is
+    /// what frees it, once that message has been dispatched.
+    pub fn show_menu(&self, rows: &[MenuRow]) -> io::Result<()> {
         let menu = render::build(rows).map_err(io::Error::other)?;
         self.icon.set_menu(Some(render::into_context_menu(menu)));
+        self.icon.show_menu();
         Ok(())
     }
+
+    /// Drops the menu built for the last open, so the only thing this app keeps
+    /// resident for its UI is the icon.
+    pub fn release_menu(&self) {
+        self.icon.set_menu(None);
+    }
+}
+
+/// Whether the user just clicked the icon, asking for the menu.
+///
+/// Always drains the queue, whatever it finds: `tray-icon` posts `Enter`,
+/// `Move` and `Leave` into an unbounded channel as the cursor crosses the icon,
+/// and a reader that only looked when it expected a click would leave those to
+/// accumulate for the life of the process.
+pub fn take_menu_request() -> bool {
+    let mut wanted = false;
+    while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+        // On release, which is where Windows opens a context menu — and it also
+        // means a press that turns into a drag never opens one.
+        if let TrayIconEvent::Click {
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            wanted = true;
+        }
+    }
+    wanted
 }
 
 /// Drains this thread's message queue. Returns `false` on `WM_QUIT`.

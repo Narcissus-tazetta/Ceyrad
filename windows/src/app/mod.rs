@@ -107,9 +107,6 @@ pub struct App {
 
     logged_unknown_aumids: HashSet<String>,
     last_status: Vec<String>,
-    /// The menu shows settings as well as status, so a change the status rows
-    /// cannot express still has to reach it.
-    menu_dirty: bool,
     /// Whether anything the status rows are made of has moved since they were
     /// last built.
     ///
@@ -121,6 +118,9 @@ pub struct App {
     /// `track`, or moves `active_source`, sets it. The connection is covered
     /// separately by `last_reported_conn`, which is a `Copy` scalar and can
     /// simply be compared.
+    ///
+    /// This is only about the *log*. The menu is built when it opens, so
+    /// nothing here has to keep it in step.
     status_dirty: bool,
     last_reported_conn: ConnState,
 }
@@ -139,16 +139,15 @@ impl App {
         let overrides = settings_store::aumid_overrides_from_env();
         if !overrides.is_empty() {
             log(&format!(
-                "AUMID overrides: apple music {:?}, spotify {:?}",
-                overrides.apple_music, overrides.spotify
+                "AUMID overrides: apple music {:?}",
+                overrides.apple_music
             ));
         }
 
         let wake = Arc::new(WakeEvent::new()?);
         WAKE_HANDLE.store(wake.handle().0 as isize, Ordering::SeqCst);
 
-        let watcher = Watcher::new(Arc::clone(&wake), overrides, watched_sources(&settings))
-            .map_err(io::Error::other)?;
+        let watcher = Watcher::new(Arc::clone(&wake), overrides).map_err(io::Error::other)?;
 
         // Nothing keeps the Run entry in step with a portable exe that moved, so
         // it is checked here rather than left to fail quietly at the next logon.
@@ -180,7 +179,6 @@ impl App {
             update_check_requested: false,
             logged_unknown_aumids: HashSet::new(),
             last_status: Vec::new(),
-            menu_dirty: false,
             // Nothing has been reported yet, so the first pass must.
             status_dirty: true,
             last_reported_conn: ConnState::Disconnected,
@@ -216,13 +214,20 @@ impl App {
                 log(&format!("wake: could not reset ({e})"));
             }
 
+            // After the pump, which is what turns a click into an event. The
+            // menu is built here, from the state as it stands, and torn down
+            // again when it closes.
+            if tray::take_menu_request() && !self.open_menu() {
+                log("quit requested");
+                break;
+            }
+
             if self.watcher.is_dirty() {
                 self.handle_smtc();
             }
             self.drain_catalog();
             self.drain_updates();
             self.fire_due_timers();
-            // After the pump, which is what turns a click into an event.
             while let Some(action) = tray::try_recv_action() {
                 self.apply_menu_action(action);
             }
@@ -273,11 +278,6 @@ impl App {
             MenuAction::EditButtonLabel(button) => self.edit_button_label(button),
             MenuAction::EditCustomUrl => self.edit_custom_url(),
             MenuAction::EditRepositoryUrl => self.edit_repository_url(),
-            MenuAction::ToggleSource(source) => {
-                let enabled = !self.settings.is_source_enabled(source);
-                self.settings.set_source_enabled(source, enabled);
-                self.settings_changed();
-            }
             MenuAction::SetBadgeLabel(badge) => {
                 self.settings.badge_label = badge;
                 self.settings_changed();
@@ -289,9 +289,10 @@ impl App {
             MenuAction::SetLanguage(language) => {
                 self.settings.language = language;
                 // Only the menu's own wording changes, so there is nothing to
-                // re-send to Discord — but the rows have to be rebuilt.
+                // re-send to Discord — but the status rows are logged in the
+                // same language, so they are worth saying again.
                 self.persist_settings();
-                self.menu_dirty = true;
+                self.status_dirty = true;
             }
             MenuAction::ToggleLaunchAtLogin => self.toggle_launch_at_login(),
             MenuAction::CheckForUpdates => {
@@ -349,9 +350,8 @@ impl App {
                 );
             }
         }
-        // Not a `Settings` field, so there is nothing to save — but the row has
-        // to be rebuilt from the registry's new answer.
-        self.menu_dirty = true;
+        // Not a `Settings` field, so there is nothing to save, and the row is
+        // read from the registry the next time the menu opens.
     }
 
     fn edit_button_label(&mut self, button: ButtonSlot) {
@@ -450,26 +450,11 @@ impl App {
         )
     }
 
-    /// macOS's `settingsChanged()`: save, then react as if the sources whose
-    /// enabled flag just moved had appeared or vanished from SMTC.
+    /// macOS's `settingsChanged()`: save, then re-evaluate what should be on
+    /// screen now that a setting has moved.
     fn settings_changed(&mut self) {
         self.persist_settings();
-        self.menu_dirty = true;
         self.status_dirty = true;
-
-        // A source that was switched off is dropped as though its session had
-        // gone; one switched on is picked up by the next snapshot, which the
-        // watcher is asked for here rather than waited for.
-        for source in MusicSourceId::ALL {
-            if !self.settings.is_source_enabled(source) && self.sources.get(source).running {
-                log(&format!("{}: no longer watched", source.display_name()));
-                *self.sources.get_mut(source) = SourceState::default();
-            }
-        }
-        // Also rebuilds the subscriptions when the enabled set moved: a source
-        // switched off should stop waking this app, not merely be ignored once
-        // it has.
-        self.watcher.set_watched(watched_sources(&self.settings));
 
         if !self.sources.any_running() {
             self.active_source = None;
@@ -484,11 +469,8 @@ impl App {
             return;
         }
 
-        let selection = crate::core::source_selector::select_active_source(
-            &self.sources.apple_music,
-            &self.sources.spotify,
-            self.active_source,
-        );
+        let selection =
+            crate::core::source_selector::select_active_source(&self.sources.apple_music);
         if selection != self.active_source {
             self.switch_active_source(selection);
         } else {
@@ -545,13 +527,10 @@ impl App {
         // and the menu are built from, not just the source on display.
         let mut any_changed = false;
 
-        for source in MusicSourceId::ALL {
-            let incoming = self
-                .settings
-                .is_source_enabled(source)
-                .then(|| snapshot.get(source))
-                .flatten();
-            let state = self.sources.get_mut(source);
+        {
+            let source = MusicSourceId::AppleMusic;
+            let incoming = snapshot.apple_music.as_ref();
+            let state = &mut self.sources.apple_music;
 
             match incoming {
                 Some(session) => {
@@ -633,11 +612,8 @@ impl App {
 
         self.attempt_connect();
 
-        let selection = crate::core::source_selector::select_active_source(
-            &self.sources.apple_music,
-            &self.sources.spotify,
-            self.active_source,
-        );
+        let selection =
+            crate::core::source_selector::select_active_source(&self.sources.apple_music);
         if selection != self.active_source {
             self.switch_active_source(selection);
         } else if active_changed {
@@ -698,54 +674,53 @@ impl App {
     /// `catalog_requested_for` guard is what keeps SMTC's event rate from
     /// turning into a request rate.
     fn request_missing_catalog(&mut self, now: Instant) {
-        for source in MusicSourceId::ALL {
-            let state = self.sources.get_mut(source);
-            if !state.running || state.catalog.is_some() {
-                continue;
-            }
-            // A failed lookup is serving its cooling-off period.
-            if state.catalog_retry_at.is_some_and(|at| at > now) {
-                continue;
-            }
-            let Some(track) = state.track.as_ref() else {
-                continue;
-            };
-            if track.name.is_empty() {
-                continue;
-            }
-            // Asked before the identity is built, not after: this is the guard
-            // that holds for the whole of a track the catalog had no answer
-            // for, so it runs on every SMTC event and must not allocate to say
-            // "already asked".
-            if state
-                .catalog_requested_for
-                .as_deref()
-                .is_some_and(|requested| track.matches_identity(requested))
-            {
-                continue;
-            }
-            let identity = track.identity();
-
-            let request = CatalogRequest {
-                source,
-                key: identity.clone(),
-                name: track.name.clone(),
-                artist: track.artist.clone(),
-                album: track.album.clone(),
-            };
-            // Logged as it goes out, not only when it comes back: a lookup that
-            // was never asked for and one that never answered produce the same
-            // silent, art-less card, and only this line tells them apart.
-            log(&format!(
-                "{}: looking up \"{}\" by \"{}\"",
-                source.display_name(),
-                request.name,
-                request.artist
-            ));
-            state.catalog_requested_for = Some(identity);
-            state.catalog_retry_at = None;
-            self.catalog.request(request);
+        let source = MusicSourceId::AppleMusic;
+        let state = &mut self.sources.apple_music;
+        if !state.running || state.catalog.is_some() {
+            return;
         }
+        // A failed lookup is serving its cooling-off period.
+        if state.catalog_retry_at.is_some_and(|at| at > now) {
+            return;
+        }
+        let Some(track) = state.track.as_ref() else {
+            return;
+        };
+        if track.name.is_empty() {
+            return;
+        }
+        // Asked before the identity is built, not after: this is the guard
+        // that holds for the whole of a track the catalog had no answer
+        // for, so it runs on every SMTC event and must not allocate to say
+        // "already asked".
+        if state
+            .catalog_requested_for
+            .as_deref()
+            .is_some_and(|requested| track.matches_identity(requested))
+        {
+            return;
+        }
+        let identity = track.identity();
+
+        let request = CatalogRequest {
+            source,
+            key: identity.clone(),
+            name: track.name.clone(),
+            artist: track.artist.clone(),
+            album: track.album.clone(),
+        };
+        // Logged as it goes out, not only when it comes back: a lookup that
+        // was never asked for and one that never answered produce the same
+        // silent, art-less card, and only this line tells them apart.
+        log(&format!(
+            "{}: looking up \"{}\" by \"{}\"",
+            source.display_name(),
+            request.name,
+            request.artist
+        ));
+        state.catalog_requested_for = Some(identity);
+        state.catalog_retry_at = None;
+        self.catalog.request(request);
     }
 
     /// Applies whatever the lookup thread has finished. A late answer is only
@@ -815,15 +790,12 @@ impl App {
                         updater::CURRENT_VERSION
                     ));
                     self.update_available = Some(release);
-                    self.menu_dirty = true;
                 }
                 UpdateOutcome::UpToDate => {
                     log(&format!("up to date ({})", updater::CURRENT_VERSION));
                     // A release that was newer and no longer is means this build
                     // was replaced while running; drop the stale offer.
-                    if self.update_available.take().is_some() {
-                        self.menu_dirty = true;
-                    }
+                    self.update_available = None;
                     if asked {
                         dialog::show_error(
                             &t(language, "Check for Updates", "アップデートを確認"),
@@ -964,12 +936,7 @@ impl App {
         if !self.sources.any_running() || self.discord.state() != ConnState::Disconnected {
             return;
         }
-        let fallback = if self.sources.apple_music.running {
-            MusicSourceId::AppleMusic
-        } else {
-            MusicSourceId::Spotify
-        };
-        let source = self.active_source.unwrap_or(fallback);
+        let source = self.active_source.unwrap_or(MusicSourceId::AppleMusic);
         match self.discord.connect(source.discord_client_id()) {
             Ok(()) => {
                 log(&format!("connecting as {}…", source.display_name()));
@@ -1068,14 +1035,14 @@ impl App {
 
         // A due retry is consumed here whether or not it leads to a request, so
         // a deadline that is already past can never keep the loop spinning.
-        let mut catalog_retry_due = false;
-        for source in MusicSourceId::ALL {
-            let state = self.sources.get_mut(source);
-            if state.catalog_retry_at.is_some_and(|at| at <= now) {
+        let catalog_retry_due = {
+            let state = &mut self.sources.apple_music;
+            let due = state.catalog_retry_at.is_some_and(|at| at <= now);
+            if due {
                 state.catalog_retry_at = None;
-                catalog_retry_due = true;
             }
-        }
+            due
+        };
         if catalog_retry_due {
             self.request_missing_catalog(now);
         }
@@ -1089,79 +1056,82 @@ impl App {
             self.handshake_deadline,
             self.update_check_at,
             self.sources.apple_music.catalog_retry_at,
-            self.sources.spotify.catalog_retry_at,
         ]
         .into_iter()
         .flatten()
         .min()
     }
 
-    /// The status rows, logged and pushed to the tray whenever they change.
+    /// The status rows, logged whenever they change.
     ///
-    /// Rebuilding the menu here rather than when it opens is the Windows
-    /// stand-in for macOS's `menuNeedsUpdate`: the shell pops the menu from
-    /// its own message handler with no hook to run first, so the rows are kept
-    /// current instead. The work lands on state changes, which are rarer than
-    /// the SMTC events that provoke them.
+    /// Only the log: the menu carries the same rows but is built when it opens,
+    /// so a track change costs two `String`s and a comparison rather than a
+    /// whole menu.
     fn report_status(&mut self) {
         // Ahead of building anything. This runs on every pass of a loop SMTC
         // wakes several times a second, and the rows are a `Vec<String>` — so
         // the question "could they have moved?" has to be answerable without
         // assembling them to find out. See `status_dirty` for the invariant.
         let conn = self.discord.state();
-        if !self.status_dirty && !self.menu_dirty && conn == self.last_reported_conn {
+        if !self.status_dirty && conn == self.last_reported_conn {
             return;
         }
         self.status_dirty = false;
         self.last_reported_conn = conn;
 
-        let status = status_lines::Input {
-            apple_music: &self.sources.apple_music,
-            spotify: &self.sources.spotify,
-            active_source: self.active_source,
-            apple_music_enabled: self.settings.apple_music_enabled,
-            spotify_enabled: self.settings.spotify_enabled,
-            discord_state: conn,
-            language: self.settings.language,
-        };
-        // Still compared against the last set: the flags above are allowed to
-        // be pessimistic, and a rebuild that produced the same rows must not
-        // reach the log or rebuild the menu.
-        let lines = status_lines::lines(&status);
-        let status_changed = lines != self.last_status;
-        if !status_changed && !self.menu_dirty {
+        // Still compared against the last set: the flag above is allowed to be
+        // pessimistic, and a rebuild that produced the same rows must not reach
+        // the log.
+        let lines = status_lines::lines(&self.status_input(conn));
+        if lines == self.last_status {
             return;
         }
-        if status_changed {
-            for line in &lines {
-                log(&format!("   {line}"));
-            }
-            self.last_status = lines;
+        for line in &lines {
+            log(&format!("   {line}"));
         }
-        if let Some(tray) = &self.tray {
-            let rows = menu_model::build_menu(&menu_model::MenuInput {
-                status,
-                settings: &self.settings,
-                launch_at_login: launch_at_login::is_enabled(),
-                update_available: self.update_available.as_ref().map(|r| r.tag.as_str()),
-            });
-            if let Err(e) = tray.set_menu(&rows) {
-                log(&format!("tray: could not update the menu ({e})"));
-            }
-        }
-        self.menu_dirty = false;
+        self.last_status = lines;
     }
-}
 
-/// Which sources the watcher should subscribe to, in `MusicSourceId::index`
-/// order. Derived from `ALL` rather than written out, so a source added to the
-/// enum cannot be silently left unwatched.
-fn watched_sources(settings: &Settings) -> [bool; MusicSourceId::COUNT] {
-    let mut watched = [false; MusicSourceId::COUNT];
-    for source in MusicSourceId::ALL {
-        watched[source.index()] = settings.is_source_enabled(source);
+    fn status_input(&self, conn: ConnState) -> status_lines::Input<'_> {
+        status_lines::Input {
+            apple_music: &self.sources.apple_music,
+            discord_state: conn,
+            language: self.settings.language,
+        }
     }
-    watched
+
+    /// Builds the menu, shows it, and frees it again once it closes.
+    ///
+    /// macOS's `menuNeedsUpdate`, reached the long way round: the rows are
+    /// assembled from the state as it stands at the click, so nothing has to
+    /// keep a menu in step with the app between opens and nothing about it
+    /// stays resident. `launch_at_login::is_enabled()` — a registry read — is
+    /// part of that, and now happens per open rather than per track change.
+    ///
+    /// Returns `false` if the message pump saw `WM_QUIT`.
+    fn open_menu(&mut self) -> bool {
+        let rows = menu_model::build_menu(&menu_model::MenuInput {
+            status: self.status_input(self.discord.state()),
+            settings: &self.settings,
+            launch_at_login: launch_at_login::is_enabled(),
+            update_available: self.update_available.as_ref().map(|r| r.tag.as_str()),
+        });
+
+        let Some(tray) = &self.tray else {
+            return true;
+        };
+        if let Err(e) = tray.show_menu(&rows) {
+            log(&format!("tray: could not show the menu ({e})"));
+            return true;
+        }
+        // `show_menu` returns once the menu is off screen, but the item the user
+        // chose arrives afterwards as a `WM_COMMAND` posted to the tray window.
+        // Dispatching it here is what turns it into a `MenuAction` before the
+        // menu that names it is freed; the loop applies it later this pass.
+        let running = tray::pump_messages();
+        tray.release_menu();
+        running
+    }
 }
 
 fn install_ctrl_handler() {

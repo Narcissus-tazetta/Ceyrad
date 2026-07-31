@@ -15,8 +15,8 @@
 //! video players and messaging apps all appear in the same list. Subscribing to
 //! all of them would mean this app woke up — and asked every session what it
 //! was doing — every time anyone's video advanced a frame's worth of timeline,
-//! with Apple Music closed. So only the sessions belonging to a source the user
-//! is actually watching are subscribed to, and the rest are noted once and
+//! with Apple Music closed. So only sessions this app recognises (currently
+//! just Apple Music) are subscribed to, and the rest are noted once and
 //! ignored. With no player running, the only thing that can wake this app is
 //! `SessionsChanged`, which is also how a player that starts later is noticed.
 //!
@@ -89,7 +89,6 @@ pub struct SessionState {
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
     pub apple_music: Option<SessionState>,
-    pub spotify: Option<SessionState>,
     /// AUMIDs that matched no known player, for logging. Every media app on the
     /// machine shows up here — browsers, games, video players — so it is filled
     /// only on a pass that rebuilt the subscriptions, which is when the session
@@ -101,7 +100,6 @@ impl Snapshot {
     pub fn get(&self, source: MusicSourceId) -> Option<&SessionState> {
         match source {
             MusicSourceId::AppleMusic => self.apple_music.as_ref(),
-            MusicSourceId::Spotify => self.spotify.as_ref(),
         }
     }
 }
@@ -201,10 +199,6 @@ pub struct Watcher {
     /// Which AUMIDs count as which player. Owned here because it is only ever
     /// consulted while deciding what to subscribe to.
     overrides: AumidOverrides,
-    /// Which sources the user is watching, indexed by `MusicSourceId::index`.
-    /// A source switched off is not subscribed to at all, so it stops waking
-    /// this app rather than being read and discarded.
-    watched: [bool; MusicSourceId::COUNT],
     /// Some session changed; the loop should take a fresh snapshot.
     dirty: Arc<AtomicBool>,
     /// The session list itself changed, so subscriptions must be rebuilt.
@@ -229,11 +223,7 @@ impl Drop for Watcher {
 
 impl Watcher {
     /// Signals `wake` whenever anything changes.
-    pub fn new(
-        wake: Arc<WakeEvent>,
-        overrides: AumidOverrides,
-        watched: [bool; MusicSourceId::COUNT],
-    ) -> windows::core::Result<Self> {
+    pub fn new(wake: Arc<WakeEvent>, overrides: AumidOverrides) -> windows::core::Result<Self> {
         let manager = join_with_timeout(&SessionManager::RequestAsync()?, SESSION_MANAGER_TIMEOUT)?;
 
         let dirty = Arc::new(AtomicBool::new(true));
@@ -256,7 +246,6 @@ impl Watcher {
             manager,
             wake,
             overrides,
-            watched,
             dirty,
             sessions_changed,
             metadata_dirty,
@@ -283,20 +272,6 @@ impl Watcher {
     pub fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::SeqCst);
         let _ = self.wake.set();
-    }
-
-    /// Changes which sources are subscribed to.
-    ///
-    /// A source switched back on has a session that never stopped, so SMTC has
-    /// nothing new to say about it — the resubscribe forced here is what finds
-    /// it, and the wake is what makes that happen now rather than whenever the
-    /// next timer falls due.
-    pub fn set_watched(&mut self, watched: [bool; MusicSourceId::COUNT]) {
-        if self.watched != watched {
-            self.watched = watched;
-            self.sessions_changed.store(true, Ordering::SeqCst);
-        }
-        self.mark_dirty();
     }
 
     /// Reads every watched session, re-subscribing first if the session list
@@ -339,10 +314,9 @@ impl Watcher {
                 cache,
                 ..
             } = subscription;
-            let state = read_session(session, *source, cache, refresh, &mut retry_metadata);
+            let state = read_session(session, cache, refresh, &mut retry_metadata);
             match source {
                 MusicSourceId::AppleMusic => snapshot.apple_music = Some(state),
-                MusicSourceId::Spotify => snapshot.spotify = Some(state),
             }
         }
 
@@ -376,9 +350,6 @@ impl Watcher {
                 self.unknown_aumids.push(aumid);
                 continue;
             };
-            if !self.watched[source.index()] {
-                continue;
-            }
 
             // Built in place so that a failure on the second or third
             // registration still unregisters the first: `subscription` is
@@ -462,7 +433,6 @@ struct Timeline {
 
 fn read_session(
     session: &Session,
-    source: MusicSourceId,
     cache: &mut SessionCache,
     refresh: bool,
     retry_metadata: &mut bool,
@@ -504,7 +474,7 @@ fn read_session(
     cache.duration_sec = timeline.duration_sec;
 
     if stale {
-        match read_metadata(session, source) {
+        match read_metadata(session) {
             Some(answer) => cache.metadata = answer,
             // The call failed. Keeping whatever was cached and asking again
             // next pass beats dropping the track off the card for a tick, and
@@ -542,7 +512,7 @@ fn read_session(
 
 /// `None` when the call itself failed, which is not the same as a session that
 /// answered with nothing — one is worth retrying and the other is an answer.
-fn read_metadata(session: &Session, source: MusicSourceId) -> Option<Cached> {
+fn read_metadata(session: &Session) -> Option<Cached> {
     // Served by the media app's own process over RPC, on the event loop's
     // thread. A wedged, suspended or crashing player would never complete it,
     // and an unbounded wait here is not a slow app but a dead one — no menu, no
@@ -563,12 +533,7 @@ fn read_metadata(session: &Session, source: MusicSourceId) -> Option<Cached> {
         return Some(Cached::Empty);
     }
 
-    // Only Apple Music reports the combined shape; Spotify fills both fields in
-    // properly and must be left as it is.
-    let (artist, album) = match source {
-        MusicSourceId::AppleMusic => split_combined_artist(&artist, &album),
-        MusicSourceId::Spotify => (artist, album),
-    };
+    let (artist, album) = split_combined_artist(&artist, &album);
     Some(Cached::Track(Metadata {
         name,
         artist,

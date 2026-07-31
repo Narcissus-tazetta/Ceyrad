@@ -71,20 +71,6 @@ pub fn catalog_from(result: &SearchResult) -> CatalogInfo {
     }
 }
 
-/// Everything except the artwork, dropped.
-///
-/// The links this API returns all point at Apple Music. Under a Spotify
-/// presence the buttons read "Play on Spotify", so handing them an
-/// `music.apple.com` url would be an outright lie — worse than no button at
-/// all. The cover art is the same record either way, so that much survives.
-/// `None` when there was no artwork, which leaves nothing worth reporting.
-pub fn artwork_only(catalog: CatalogInfo) -> Option<CatalogInfo> {
-    catalog.artwork_url.map(|artwork_url| CatalogInfo {
-        artwork_url: Some(artwork_url),
-        ..Default::default()
-    })
-}
-
 /// The best result, or `None` when nothing agrees closely enough to be safe.
 pub fn pick_best<'a>(
     results: &'a [SearchResult],
@@ -409,33 +395,6 @@ mod tests {
     fn strip_featuring_leaves_unrelated_brackets_and_words() {
         assert_eq!(strip_featuring("Song (Remix)"), "Song (Remix)");
         assert_eq!(strip_featuring("Software Update"), "Software Update");
-    }
-
-    #[test]
-    fn artwork_only_keeps_the_cover_and_drops_every_link() {
-        let full = CatalogInfo {
-            song_url: Some("https://music.apple.com/song".into()),
-            artist_url: Some("https://music.apple.com/artist".into()),
-            album_url: Some("https://music.apple.com/album".into()),
-            artwork_url: Some("https://is1.mzstatic.com/a.jpg".into()),
-        };
-        let trimmed = artwork_only(full).expect("artwork survives");
-        assert_eq!(
-            trimmed.artwork_url.as_deref(),
-            Some("https://is1.mzstatic.com/a.jpg")
-        );
-        assert_eq!(trimmed.song_url, None);
-        assert_eq!(trimmed.artist_url, None);
-        assert_eq!(trimmed.album_url, None);
-    }
-
-    #[test]
-    fn artwork_only_yields_nothing_when_there_is_no_artwork() {
-        let links_only = CatalogInfo {
-            song_url: Some("https://music.apple.com/song".into()),
-            ..Default::default()
-        };
-        assert!(artwork_only(links_only).is_none());
     }
 
     #[test]

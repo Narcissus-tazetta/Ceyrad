@@ -9,6 +9,7 @@ pub mod models;
 pub mod settings_model;
 pub mod source_selector;
 pub mod status_lines;
+pub mod text;
 pub mod track_change;
 pub mod track_metadata;
 pub mod tray_icon_glyph;

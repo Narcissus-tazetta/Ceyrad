@@ -3,7 +3,7 @@
 //! so it is worth pinning down.
 
 use ceyrad::core::i18n::AppLanguage;
-use ceyrad::core::models::{ConnState, MusicSourceId, PlayerState, SourceState, TrackInfo};
+use ceyrad::core::models::{ConnState, PlayerState, SourceState, TrackInfo};
 use ceyrad::core::status_lines::{lines, Input};
 
 fn playing(name: &str, artist: &str) -> SourceState {
@@ -29,22 +29,18 @@ fn stopped() -> SourceState {
     }
 }
 
-fn input<'a>(apple_music: &'a SourceState, spotify: &'a SourceState) -> Input<'a> {
+fn input(apple_music: &SourceState) -> Input<'_> {
     Input {
         apple_music,
-        spotify,
-        active_source: None,
-        apple_music_enabled: true,
-        spotify_enabled: false,
         discord_state: ConnState::Disconnected,
         language: AppLanguage::En,
     }
 }
 
 #[test]
-fn a_disabled_source_gets_no_row_at_all() {
+fn not_running_reports_as_such() {
     let off = SourceState::default();
-    let rows = lines(&input(&off, &off));
+    let rows = lines(&input(&off));
     assert_eq!(
         rows,
         vec![
@@ -55,74 +51,35 @@ fn a_disabled_source_gets_no_row_at_all() {
 }
 
 #[test]
-fn enabling_spotify_adds_its_row() {
-    let off = SourceState::default();
-    let mut i = input(&off, &off);
-    i.spotify_enabled = true;
-    let rows = lines(&i);
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[1], "Spotify: Not Running");
-}
-
-#[test]
 fn playing_and_paused_get_their_own_marks() {
     let am = playing("Song", "Artist");
-    let off = SourceState::default();
-    assert_eq!(lines(&input(&am, &off))[0], "♪ Apple Music: Song — Artist");
+    assert_eq!(lines(&input(&am))[0], "♪ Apple Music: Song — Artist");
 
     let am = paused("Song", "Artist");
-    assert_eq!(lines(&input(&am, &off))[0], "⏸ Apple Music: Song — Artist");
+    assert_eq!(lines(&input(&am))[0], "⏸ Apple Music: Song — Artist");
 }
 
 #[test]
 fn a_running_but_stopped_player_says_so() {
-    let off = SourceState::default();
-    assert_eq!(lines(&input(&stopped(), &off))[0], "Apple Music: Stopped");
+    assert_eq!(lines(&input(&stopped()))[0], "Apple Music: Stopped");
 }
 
 #[test]
 fn a_track_without_an_artist_drops_the_dash() {
     let am = playing("Song", "");
-    let off = SourceState::default();
-    assert_eq!(lines(&input(&am, &off))[0], "♪ Apple Music: Song");
-}
-
-#[test]
-fn one_source_with_a_track_is_not_marked_as_shown() {
-    let am = playing("Song", "Artist");
-    let off = SourceState::default();
-    let mut i = input(&am, &off);
-    i.spotify_enabled = true;
-    i.active_source = Some(MusicSourceId::AppleMusic);
-
-    // Nothing to disambiguate, so the marker would only be noise.
-    assert!(!lines(&i).iter().any(|line| line.contains("(shown)")));
-}
-
-#[test]
-fn two_sources_with_tracks_mark_the_one_on_display() {
-    let am = playing("A", "One");
-    let sp = paused("B", "Two");
-    let mut i = input(&am, &sp);
-    i.spotify_enabled = true;
-    i.active_source = Some(MusicSourceId::AppleMusic);
-
-    let rows = lines(&i);
-    assert!(rows[0].ends_with(" (shown)"), "{}", rows[0]);
-    assert!(!rows[1].contains("(shown)"), "{}", rows[1]);
+    assert_eq!(lines(&input(&am))[0], "♪ Apple Music: Song");
 }
 
 #[test]
 fn the_discord_row_follows_the_connection_once_a_player_is_up() {
     let am = playing("Song", "Artist");
-    let off = SourceState::default();
 
     for (state, expected) in [
         (ConnState::Connected, "Discord: Connected"),
         (ConnState::Connecting, "Discord: Connecting…"),
         (ConnState::Disconnected, "Discord: Disconnected (retrying)"),
     ] {
-        let mut i = input(&am, &off);
+        let mut i = input(&am);
         i.discord_state = state;
         assert_eq!(lines(&i).last().unwrap(), expected);
     }
@@ -131,7 +88,7 @@ fn the_discord_row_follows_the_connection_once_a_player_is_up() {
 #[test]
 fn the_discord_row_says_idle_while_nothing_is_playing() {
     let off = SourceState::default();
-    let mut i = input(&off, &off);
+    let mut i = input(&off);
     // Even mid-handshake: with no player running there is nothing to report.
     i.discord_state = ConnState::Connecting;
     assert_eq!(
@@ -141,10 +98,9 @@ fn the_discord_row_says_idle_while_nothing_is_playing() {
 }
 
 #[test]
-fn japanese_translates_the_source_rows_but_never_the_discord_row() {
-    let off = SourceState::default();
+fn japanese_translates_the_source_row_but_never_the_discord_row() {
     let am = stopped();
-    let mut i = input(&am, &off);
+    let mut i = input(&am);
     i.language = AppLanguage::Ja;
     i.discord_state = ConnState::Connected;
 
@@ -152,16 +108,4 @@ fn japanese_translates_the_source_rows_but_never_the_discord_row() {
     assert_eq!(rows[0], "Apple Music: 停止中");
     // Discord-facing wording stays English on both platforms.
     assert_eq!(rows[1], "Discord: Connected");
-}
-
-#[test]
-fn japanese_marks_the_shown_source_in_japanese() {
-    let am = playing("A", "One");
-    let sp = playing("B", "Two");
-    let mut i = input(&am, &sp);
-    i.spotify_enabled = true;
-    i.language = AppLanguage::Ja;
-    i.active_source = Some(MusicSourceId::Spotify);
-
-    assert!(lines(&i)[1].ends_with("（表示中）"));
 }

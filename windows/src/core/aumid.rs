@@ -14,25 +14,22 @@ use super::models::MusicSourceId;
 
 /// Package-family prefixes, compared case-insensitively.
 const APPLE_MUSIC_PACKAGE_PREFIXES: [&str; 2] = ["appleinc.applemusicwin", "appleinc.itunes"];
-const SPOTIFY_PACKAGE_PREFIXES: [&str; 1] = ["spotifyab.spotifymusic"];
 
 /// Executable names reported by the non-Store builds. Deliberately specific:
 /// a generic name like `music.exe` would hand some unrelated player's session
 /// to Discord as Apple Music, and a wrong presence is worse than a missing one.
 const APPLE_MUSIC_EXECUTABLES: [&str; 2] = ["applemusic.exe", "itunes.exe"];
-const SPOTIFY_EXECUTABLES: [&str; 1] = ["spotify.exe"];
 
 /// Extra AUMIDs supplied at runtime, so an unrecognised install can be made to
 /// work without a rebuild.
 #[derive(Debug, Clone, Default)]
 pub struct AumidOverrides {
     pub apple_music: Vec<String>,
-    pub spotify: Vec<String>,
 }
 
 impl AumidOverrides {
     pub fn is_empty(&self) -> bool {
-        self.apple_music.is_empty() && self.spotify.is_empty()
+        self.apple_music.is_empty()
     }
 }
 
@@ -51,26 +48,14 @@ pub fn source_for_aumid(aumid: &str, overrides: &AumidOverrides) -> Option<Music
     if matches_any(id, &overrides.apple_music) {
         return Some(MusicSourceId::AppleMusic);
     }
-    if matches_any(id, &overrides.spotify) {
-        return Some(MusicSourceId::Spotify);
-    }
 
-    if matches_built_in(id, &APPLE_MUSIC_EXECUTABLES, &APPLE_MUSIC_PACKAGE_PREFIXES) {
-        return Some(MusicSourceId::AppleMusic);
-    }
-    if matches_built_in(id, &SPOTIFY_EXECUTABLES, &SPOTIFY_PACKAGE_PREFIXES) {
-        return Some(MusicSourceId::Spotify);
-    }
-    None
-}
-
-fn matches_built_in(id: &str, executables: &[&str], prefixes: &[&str]) -> bool {
-    executables
+    let is_built_in = APPLE_MUSIC_EXECUTABLES
         .iter()
         .any(|executable| id.eq_ignore_ascii_case(executable))
-        || prefixes
+        || APPLE_MUSIC_PACKAGE_PREFIXES
             .iter()
-            .any(|prefix| starts_with_ignore_ascii_case(id, prefix))
+            .any(|prefix| starts_with_ignore_ascii_case(id, prefix));
+    is_built_in.then_some(MusicSourceId::AppleMusic)
 }
 
 /// An override matches either exactly or as a prefix, so a user can paste

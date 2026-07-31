@@ -14,19 +14,7 @@ fn packaged_apple_music_matches_on_family_prefix() {
 }
 
 #[test]
-fn packaged_spotify_matches_on_family_prefix() {
-    assert_eq!(
-        source_for_aumid("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify", &none()),
-        Some(MusicSourceId::Spotify)
-    );
-}
-
-#[test]
 fn desktop_builds_match_on_executable_name() {
-    assert_eq!(
-        source_for_aumid("Spotify.exe", &none()),
-        Some(MusicSourceId::Spotify)
-    );
     assert_eq!(
         source_for_aumid("iTunes.exe", &none()),
         Some(MusicSourceId::AppleMusic)
@@ -36,8 +24,8 @@ fn desktop_builds_match_on_executable_name() {
 #[test]
 fn matching_is_case_insensitive() {
     assert_eq!(
-        source_for_aumid("sPoTiFy.ExE", &none()),
-        Some(MusicSourceId::Spotify)
+        source_for_aumid("ITUNES.EXE", &none()),
+        Some(MusicSourceId::AppleMusic)
     );
 }
 
@@ -50,6 +38,7 @@ fn unrelated_sessions_are_ignored() {
     assert_eq!(source_for_aumid("msedge.exe", &none()), None);
     assert_eq!(source_for_aumid("firefox.exe", &none()), None);
     assert_eq!(source_for_aumid("vlc.exe", &none()), None);
+    assert_eq!(source_for_aumid("spotify.exe", &none()), None);
     assert_eq!(source_for_aumid("", &none()), None);
     assert_eq!(source_for_aumid("   ", &none()), None);
 }
@@ -67,7 +56,6 @@ fn generic_names_are_not_claimed() {
 fn an_override_adds_an_unknown_id() {
     let overrides = AumidOverrides {
         apple_music: vec!["F0DC299D809B9700".into()],
-        spotify: Vec::new(),
     };
     assert_eq!(
         source_for_aumid("F0DC299D809B9700", &overrides),
@@ -78,23 +66,10 @@ fn an_override_adds_an_unknown_id() {
 #[test]
 fn an_override_may_be_a_prefix() {
     let overrides = AumidOverrides {
-        apple_music: Vec::new(),
-        spotify: vec!["MyCorp.Player".into()],
+        apple_music: vec!["MyCorp.Player".into()],
     };
     assert_eq!(
         source_for_aumid("MyCorp.Player_abc123!App", &overrides),
-        Some(MusicSourceId::Spotify)
-    );
-}
-
-#[test]
-fn an_override_wins_over_a_built_in_match() {
-    let overrides = AumidOverrides {
-        apple_music: vec!["Spotify.exe".into()],
-        spotify: Vec::new(),
-    };
-    assert_eq!(
-        source_for_aumid("Spotify.exe", &overrides),
         Some(MusicSourceId::AppleMusic)
     );
 }
@@ -106,7 +81,6 @@ fn an_override_wins_over_a_built_in_match() {
 fn a_non_ascii_override_prefix_matches_whole_characters_only() {
     let overrides = AumidOverrides {
         apple_music: vec!["日本語".into()],
-        spotify: Vec::new(),
     };
     assert_eq!(
         source_for_aumid("日本語版.exe", &overrides),
@@ -123,7 +97,6 @@ fn a_non_ascii_override_prefix_matches_whole_characters_only() {
 fn an_empty_override_entry_matches_nothing() {
     let overrides = AumidOverrides {
         apple_music: vec![String::new(), "  ".into()],
-        spotify: Vec::new(),
     };
     assert_eq!(source_for_aumid("anything.exe", &overrides), None);
 }

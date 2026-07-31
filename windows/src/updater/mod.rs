@@ -1,13 +1,18 @@
 //! Noticing that a newer release has been published.
 //!
-//! Structurally the same as `catalog`: a thread that does nothing but block on
-//! one HTTP call, reporting back through a channel and nudging the event loop's
-//! wake event. The orchestrator stays single-threaded; only blocking I/O gets a
-//! thread of its own.
+//! Like `catalog`, the blocking HTTP call gets a thread of its own and reports
+//! back through a channel, nudging the event loop's wake event; the
+//! orchestrator stays single-threaded. Unlike `catalog`, the thread lasts only
+//! as long as the request. A check happens twice on a good day — once at launch
+//! and once every 24 hours after — and carries nothing between runs worth
+//! keeping: a thread parked on a channel for a day, holding a COM apartment and
+//! an `HttpClient` open, would be resident cost with nothing to show for it.
+//! Spawning costs some tens of microseconds, once a day.
 //!
 //! What it deliberately does *not* do is download or install anything. See
 //! `core::update_check` for why that stops here.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -35,43 +40,55 @@ pub enum Outcome {
 }
 
 pub struct Updater {
-    /// `None` when the worker could not be started. Update checks are the most
-    /// expendable thing this app does, so a thread that will not spawn costs
-    /// the feature and nothing else.
-    requests: Option<Sender<()>>,
+    wake: Arc<WakeEvent>,
+    /// Kept so each check can hand a clone to the thread it spawns.
+    sender: Sender<Outcome>,
     results: Receiver<Outcome>,
+    /// Whether a check is already on its way. The scheduled check and the menu
+    /// item share one answer, so the second ask joins the first rather than
+    /// opening a second connection to GitHub.
+    in_flight: Arc<AtomicBool>,
 }
 
 impl Updater {
     pub fn new(wake: Arc<WakeEvent>) -> Self {
-        let (requests, request_rx) = channel::<()>();
-        let (result_tx, results) = channel::<Outcome>();
-
-        // Not `expect`: with `panic = "abort"` in a windowless binary that is a
-        // silent process death at launch, no message and no log line, for a
-        // feature the app runs fine without.
-        let spawned = thread::Builder::new()
-            .name("updater".into())
-            .spawn(move || worker(request_rx, result_tx, wake));
-
-        let requests = match spawned {
-            Ok(_) => Some(requests),
-            Err(e) => {
-                log(&format!(
-                    "updater: could not start the check thread ({e}); update checks are off"
-                ));
-                None
-            }
-        };
-
-        Self { requests, results }
+        let (sender, results) = channel::<Outcome>();
+        Self {
+            wake,
+            sender,
+            results,
+            in_flight: Arc::new(AtomicBool::new(false)),
+        }
     }
 
-    /// Asks for a check. Cheap to call more often than needed — the worker
-    /// collapses a backlog into one request.
+    /// Asks for a check. Cheap to call more often than needed — an ask made
+    /// while one is in flight is answered by the one already running.
     pub fn check(&self) {
-        if let Some(requests) = &self.requests {
-            let _ = requests.send(());
+        if self.in_flight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let results = self.sender.clone();
+        let wake = Arc::clone(&self.wake);
+        let in_flight = Arc::clone(&self.in_flight);
+
+        // Not `expect`: a windowless binary that dies here dies silently, with
+        // no message and no log line, for the most expendable feature it has.
+        let spawned = thread::Builder::new()
+            .name("updater".into())
+            .spawn(move || {
+                let outcome = run_check();
+                let _ = results.send(outcome);
+                // Cleared before the nudge, so the event loop cannot wake, read
+                // the answer, and be refused the next check by a flag belonging
+                // to a thread that has already finished.
+                in_flight.store(false, Ordering::SeqCst);
+                let _ = wake.set();
+            });
+
+        if let Err(e) = spawned {
+            self.in_flight.store(false, Ordering::SeqCst);
+            log(&format!("updater: could not start the check ({e})"));
         }
     }
 
@@ -80,51 +97,46 @@ impl Updater {
     }
 }
 
-fn worker(requests: Receiver<()>, results: Sender<Outcome>, wake: Arc<WakeEvent>) {
+/// The whole of one check, on the thread that was spawned for it.
+///
+/// Every path returns an `Outcome` — including the two that can only fail
+/// before the network is reached — because a user who picked "Check for
+/// Updates" is owed an answer either way.
+fn run_check() -> Outcome {
+    // WinRT apartments are per-thread, so this one declares its own rather than
+    // leaning on whatever the main thread happened to choose.
     let _com = ComApartment::enter();
 
     let Some(url) = update_check::latest_release_url(env!("CARGO_PKG_REPOSITORY")) else {
         // Only reachable if the repository field stops being a GitHub URL, in
-        // which case there is nowhere to ask and no point holding the thread.
-        log("updater: no GitHub repository to check; update checks are off");
-        return;
+        // which case there is nowhere to ask.
+        log("updater: no GitHub repository to check");
+        return Outcome::Failed;
     };
 
     let http = match Http::new() {
         Ok(http) => http,
         Err(e) => {
-            log(&format!(
-                "updater: no HTTP client ({e}); update checks are off"
-            ));
-            return;
+            log(&format!("updater: no HTTP client ({e})"));
+            return Outcome::Failed;
         }
     };
 
-    while requests.recv().is_ok() {
-        // A backlog means the same question asked twice; one answer covers it.
-        while requests.try_recv().is_ok() {}
-
-        let outcome = match http.get_with_user_agent(&url, Some(USER_AGENT)) {
-            Ok(body) => match update_check::parse_latest(&body) {
-                Some(release) if update_check::is_newer(&release.version, CURRENT_VERSION) => {
-                    Outcome::Available(release)
-                }
-                Some(_) => Outcome::UpToDate,
-                None => {
-                    log("updater: no usable release in the response");
-                    Outcome::Failed
-                }
-            },
-            Err(e) => {
-                log(&format!("updater: check failed ({e})"));
+    match http.get_with_user_agent(&url, Some(USER_AGENT)) {
+        Ok(body) => match update_check::parse_latest(&body) {
+            Some(release) if update_check::is_newer(&release.version, CURRENT_VERSION) => {
+                Outcome::Available(release)
+            }
+            Some(_) => Outcome::UpToDate,
+            None => {
+                log("updater: no usable release in the response");
                 Outcome::Failed
             }
-        };
-
-        if results.send(outcome).is_err() {
-            break;
+        },
+        Err(e) => {
+            log(&format!("updater: check failed ({e})"));
+            Outcome::Failed
         }
-        let _ = wake.set();
     }
 }
 

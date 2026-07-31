@@ -13,27 +13,15 @@ pub enum PlayerState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MusicSourceId {
     AppleMusic,
-    Spotify,
 }
 
 impl MusicSourceId {
-    pub const COUNT: usize = 2;
-    pub const ALL: [MusicSourceId; Self::COUNT] =
-        [MusicSourceId::AppleMusic, MusicSourceId::Spotify];
-
-    /// Position in `ALL`, so per-source state can live in a fixed-size array
-    /// instead of a map. Kept in step with `ALL` by the test below.
-    pub const fn index(self) -> usize {
-        match self {
-            MusicSourceId::AppleMusic => 0,
-            MusicSourceId::Spotify => 1,
-        }
-    }
+    pub const COUNT: usize = 1;
+    pub const ALL: [MusicSourceId; Self::COUNT] = [MusicSourceId::AppleMusic];
 
     pub fn display_name(self) -> &'static str {
         match self {
             MusicSourceId::AppleMusic => "Apple Music",
-            MusicSourceId::Spotify => "Spotify",
         }
     }
 
@@ -42,7 +30,6 @@ impl MusicSourceId {
     pub fn discord_client_id(self) -> &'static str {
         match self {
             MusicSourceId::AppleMusic => "1525381518258606130",
-            MusicSourceId::Spotify => "1526238417845751959",
         }
     }
 }
@@ -65,8 +52,6 @@ pub struct TrackInfo {
     /// sample would rewind Discord's progress bar, so the elapsed time since
     /// this instant is added back in at build time.
     pub position_sampled_at: SystemTime,
-    /// Spotify's `spotify:track:xxx`. `None` for Apple Music.
-    pub track_id: Option<String>,
 }
 
 impl TrackInfo {
@@ -82,18 +67,14 @@ impl TrackInfo {
             duration_sec: None,
             position_sec: None,
             position_sampled_at: SystemTime::now(),
-            track_id: None,
         }
     }
 
     pub fn identity(&self) -> String {
-        match &self.track_id {
-            Some(id) => id.clone(),
-            None => format!(
-                "{}{}{}{}{}",
-                self.name, UNIT_SEPARATOR, self.artist, UNIT_SEPARATOR, self.album
-            ),
-        }
+        format!(
+            "{}{}{}{}{}",
+            self.name, UNIT_SEPARATOR, self.artist, UNIT_SEPARATOR, self.album
+        )
     }
 
     /// Whether `identity` would have produced exactly `candidate`.
@@ -103,29 +84,24 @@ impl TrackInfo {
     /// second — for any track the catalog had no answer for, which is every
     /// locally imported one. The test below pins it to `identity` itself.
     pub fn matches_identity(&self, candidate: &str) -> bool {
-        match &self.track_id {
-            Some(id) => id == candidate,
-            None => {
-                // Walks the join rather than splitting on the separator.
-                // Splitting looks equivalent and is not: a field is free to
-                // contain a separator of its own — nothing stops a title — and
-                // the split would then hand the pieces back in the wrong
-                // places. Consuming each field by its own length cannot.
-                let Some(rest) = candidate.strip_prefix(self.name.as_str()) else {
-                    return false;
-                };
-                let Some(rest) = rest.strip_prefix(UNIT_SEPARATOR) else {
-                    return false;
-                };
-                let Some(rest) = rest.strip_prefix(self.artist.as_str()) else {
-                    return false;
-                };
-                let Some(rest) = rest.strip_prefix(UNIT_SEPARATOR) else {
-                    return false;
-                };
-                rest == self.album
-            }
-        }
+        // Walks the join rather than splitting on the separator. Splitting
+        // looks equivalent and is not: a field is free to contain a separator
+        // of its own — nothing stops a title — and the split would then hand
+        // the pieces back in the wrong places. Consuming each field by its
+        // own length cannot.
+        let Some(rest) = candidate.strip_prefix(self.name.as_str()) else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix(UNIT_SEPARATOR) else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix(self.artist.as_str()) else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix(UNIT_SEPARATOR) else {
+            return false;
+        };
+        rest == self.album
     }
 
     /// Takes on `other`'s playback position, leaving the strings alone.
@@ -191,26 +167,23 @@ impl Default for SourceState {
 #[derive(Debug, Clone, Default)]
 pub struct SourceStates {
     pub apple_music: SourceState,
-    pub spotify: SourceState,
 }
 
 impl SourceStates {
     pub fn get(&self, id: MusicSourceId) -> &SourceState {
         match id {
             MusicSourceId::AppleMusic => &self.apple_music,
-            MusicSourceId::Spotify => &self.spotify,
         }
     }
 
     pub fn get_mut(&mut self, id: MusicSourceId) -> &mut SourceState {
         match id {
             MusicSourceId::AppleMusic => &mut self.apple_music,
-            MusicSourceId::Spotify => &mut self.spotify,
         }
     }
 
     pub fn any_running(&self) -> bool {
-        self.apple_music.running || self.spotify.running
+        self.apple_music.running
     }
 }
 
@@ -221,16 +194,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_track_id_is_the_identity_on_its_own() {
-        // Spotify supplies a stable id; when it is there, the display strings
-        // must not participate — a re-tagged title is still the same track.
-        let mut track = TrackInfo::new("Song", "Artist", "Album");
-        track.track_id = Some("spotify:track:abc".into());
-        assert_eq!(track.identity(), "spotify:track:abc");
-    }
-
-    #[test]
-    fn without_a_track_id_the_fields_are_joined_by_a_unit_separator() {
+    fn fields_are_joined_by_a_unit_separator() {
         // Pinned because this value gates catalog lookups and change
         // detection: a separator that appeared inside a field would let two
         // different tracks collide.
@@ -249,12 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn every_source_indexes_its_own_slot_in_all() {
-        // `index` is what lets per-source state live in a `[T; COUNT]`; a
-        // mapping that drifted from `ALL` would hand one source another's.
-        for (position, source) in MusicSourceId::ALL.into_iter().enumerate() {
-            assert_eq!(source.index(), position, "{source:?}");
-        }
+    fn all_stays_in_step_with_count() {
         assert_eq!(MusicSourceId::ALL.len(), MusicSourceId::COUNT);
     }
 

@@ -115,8 +115,11 @@ fn clamping_does_not_leave_a_dangling_joiner() {
 
 #[test]
 fn clamping_does_not_orphan_a_combining_mark() {
-    // Same cut, spelled with a combining acute rather than a joiner.
-    let long = "e\u{301}".repeat(200);
+    // Same cut, spelled with combining marks rather than joiners: two on every
+    // letter, so the 128th character is the first of a pair and the second is
+    // on the far side of the cut. Half an accent is not the letter that was in
+    // the title, so what is left of it goes.
+    let long = "e\u{301}\u{300}".repeat(200);
     let activity = build_now(
         &track_with(&long, "Artist", Some(50.0), Some(200.0)),
         PlayerState::Playing,
@@ -128,18 +131,38 @@ fn clamping_does_not_orphan_a_combining_mark() {
     assert!(details.ends_with('e'), "{details:?}");
 }
 
+#[test]
+fn clamping_keeps_an_accent_that_fits_whole() {
+    // The other side of the same rule: a mark whose letter is still there is a
+    // character sitting on the limit, not a leftover, and dropping it would
+    // spell the last word wrong for no reason.
+    let long = "e\u{301}".repeat(200);
+    let activity = build_now(
+        &track_with(&long, "Artist", Some(50.0), Some(200.0)),
+        PlayerState::Playing,
+        None,
+        &Settings::default(),
+    );
+    let details = string_field(&activity, "details");
+    assert_eq!(details.chars().count(), 128);
+    assert!(details.ends_with("e\u{301}"), "{details:?}");
+}
+
 // MARK: - Timestamps
 
 #[test]
-fn no_timestamps_once_the_position_has_run_past_the_end() {
-    // A player reporting a too-short duration (live streams do) would
-    // otherwise pin the bar to the end, leaving `start` and `end` both sliding
-    // with the wall clock — so every rebuild would read as a change and be
-    // re-sent against Discord's rate limit for a presence that never moved.
+fn timestamps_are_clamped_once_the_position_has_run_past_the_end() {
+    // A player reporting a too-short duration (live streams and some podcast
+    // apps do) should still show a bar pinned at the end rather than none at
+    // all — matching the macOS build, which clamps the same way.
     let mut t = track_with("Song", "Artist", Some(500.0), Some(200.0));
     t.position_sampled_at = SystemTime::now();
     let activity = build_now(&t, PlayerState::Playing, None, &Settings::default());
-    assert!(!activity.contains_key("timestamps"));
+    let stamps = activity["timestamps"].as_object().expect("timestamps");
+    let start = stamps["start"].as_i64().unwrap();
+    let end = stamps["end"].as_i64().unwrap();
+    // Clamped to the 200s duration rather than the (out of range) 500s position.
+    assert_eq!(end - start, 200_000);
 }
 
 #[test]
@@ -384,20 +407,6 @@ fn song_button_label_follows_source() {
         buttons(&apple_music).unwrap()[0]["label"],
         "Play on Apple Music"
     );
-
-    let spotify_catalog = CatalogInfo {
-        song_url: Some("https://open.spotify.com/track/abc".into()),
-        ..Default::default()
-    };
-    let spotify = build(
-        &track(),
-        PlayerState::Playing,
-        Some(&spotify_catalog),
-        &settings,
-        MusicSourceId::Spotify,
-        SystemTime::now(),
-    );
-    assert_eq!(buttons(&spotify).unwrap()[0]["label"], "Play on Spotify");
 }
 
 #[test]
@@ -405,15 +414,15 @@ fn custom_button_label_wins_over_source_default() {
     let mut settings = Settings::default();
     settings.set_button2_type(LinkType::Disabled);
     settings.set_button1_label("My Label");
-    let spotify = build(
+    let apple_music = build(
         &track(),
         PlayerState::Playing,
         Some(&catalog()),
         &settings,
-        MusicSourceId::Spotify,
+        MusicSourceId::AppleMusic,
         SystemTime::now(),
     );
-    assert_eq!(buttons(&spotify).unwrap()[0]["label"], "My Label");
+    assert_eq!(buttons(&apple_music).unwrap()[0]["label"], "My Label");
 }
 
 #[test]

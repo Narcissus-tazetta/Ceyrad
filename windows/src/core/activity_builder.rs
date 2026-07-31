@@ -5,6 +5,7 @@ use serde_json::{json, Map, Value};
 use super::format_time::format_time;
 use super::models::{CatalogInfo, MusicSourceId, PlayerState, TrackInfo};
 use super::settings_model::{BadgeLabelType, LinkType, Settings};
+use super::text;
 
 /// Discord requires string fields to be 2–128 characters.
 const MIN_FIELD_CHARS: usize = 2;
@@ -99,28 +100,27 @@ pub fn build(
                     .duration_since(track.position_sampled_at)
                     .map(|d| d.as_secs_f64())
                     .unwrap_or(0.0);
-                let current_position = position + elapsed_since_sample;
-                // Past the end there is no honest bar left to draw. Clamping
-                // instead would pin `start` to `now - duration`, so both
-                // timestamps would then slide with the wall clock and every
-                // rebuild would read as a change — a re-send against Discord's
-                // rate limit for a presence that has not moved. Reachable
-                // whenever a player reports a too-short duration, which live
-                // streams and some podcast apps do.
-                if current_position < duration {
-                    let now_unix = now
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64())
-                        .unwrap_or(0.0);
-                    let start = now_unix - current_position;
-                    activity.insert(
-                        "timestamps".into(),
-                        json!({
-                            "start": (start * 1000.0).round() as i64,
-                            "end": ((start + duration) * 1000.0).round() as i64,
-                        }),
-                    );
-                }
+                // Clamped rather than omitted once past the end — matching the
+                // macOS build — so a player reporting a too-short duration
+                // (live streams and some podcast apps do) still shows a bar
+                // pinned at the end instead of no bar at all. This only
+                // recomputes on an actual state change (`push_activity` is
+                // never called from a timer or a tight poll), so the
+                // clamped-and-drifting `start`/`end` this produces is bounded
+                // by real events, not a spin.
+                let current_position = (position + elapsed_since_sample).min(duration);
+                let now_unix = now
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                let start = now_unix - current_position;
+                activity.insert(
+                    "timestamps".into(),
+                    json!({
+                        "start": (start * 1000.0).round() as i64,
+                        "end": ((start + duration) * 1000.0).round() as i64,
+                    }),
+                );
             }
         }
     }
@@ -230,10 +230,15 @@ fn build_buttons(
         if !is_valid_button_url(&url) || used_urls.iter().any(|u| u == &url) {
             continue;
         }
-        let label: String = if label.is_empty() {
+        let label = if label.is_empty() {
             "Link".to_string()
         } else {
-            label.chars().take(MAX_BUTTON_LABEL_CHARS).collect()
+            // Truncated in place: the label is already owned, and the common
+            // case — a label well inside the limit — then costs nothing at all.
+            let mut label = label;
+            let end = text::truncate(&label, MAX_BUTTON_LABEL_CHARS).len();
+            label.truncate(end);
+            label
         };
         buttons.push(json!({ "label": label, "url": url }));
         used_urls.push(url);
@@ -276,36 +281,11 @@ pub fn is_valid_button_url(string: &str) -> bool {
     scheme == "http" || scheme == "https"
 }
 
-/// Whether `c` only exists as part of the character before it.
-///
-/// Cutting at a fixed scalar count can land in the middle of one of these — a
-/// family emoji is seven scalars joined by ZWJ — and what Discord then renders
-/// is a dangling joiner or a bare combining mark. Swift's `prefix` counts
-/// grapheme clusters and never splits one; this is the same guarantee reached
-/// from the other side, by dropping the incomplete tail.
-fn is_continuation(c: char) -> bool {
-    matches!(c,
-        '\u{200D}'                  // zero-width joiner
-        | '\u{FE0E}' | '\u{FE0F}'   // variation selectors
-        | '\u{1F3FB}'..='\u{1F3FF}' // skin-tone modifiers
-        | '\u{0300}'..='\u{036F}'   // combining diacritical marks
-        | '\u{20D0}'..='\u{20F0}'   // combining marks for symbols
-        | '\u{FE20}'..='\u{FE2F}'   // combining half marks
-        | '\u{E0020}'..='\u{E007F}' // tag characters (flag sequences)
-    )
-}
-
 fn clamp(s: &str) -> String {
-    let mut value: String = s.chars().take(MAX_FIELD_CHARS).collect();
-    // Only runs when the take above actually cut something off. Stripping the
-    // trailing joiner is part of the same pass: a ZWJ only means anything
-    // between two characters, so one left at the end goes with them.
-    if s.chars().count() > MAX_FIELD_CHARS {
-        while value.chars().next_back().is_some_and(is_continuation) {
-            value.pop();
-        }
-    }
-    while value.chars().count() < MIN_FIELD_CHARS {
+    let mut value = text::truncate(s, MAX_FIELD_CHARS).to_string();
+    // `take` rather than a full count: all this asks is whether there are two
+    // characters, and `value` may hold 128 of them.
+    while value.chars().take(MIN_FIELD_CHARS).count() < MIN_FIELD_CHARS {
         value.push(PAD_CHAR);
     }
     value
@@ -328,6 +308,37 @@ mod tests {
     fn clamp_truncates_to_128_chars() {
         let long = "あ".repeat(300);
         assert_eq!(clamp(&long).chars().count(), 128);
+    }
+
+    #[test]
+    fn clamp_leaves_a_string_that_exactly_fits_alone() {
+        // The off-by-one that would show up as a title losing its last
+        // character for no reason.
+        let exact = "あ".repeat(MAX_FIELD_CHARS);
+        assert_eq!(clamp(&exact), exact);
+    }
+
+    #[test]
+    fn clamp_does_not_leave_half_a_character_at_the_cut() {
+        // The cut falls between two marks on the same character, so what is
+        // left of it goes rather than being sent as a character that was never
+        // in the title.
+        let long = format!("{}\u{0301}\u{0300}x", "a".repeat(MAX_FIELD_CHARS - 1));
+        assert_eq!(clamp(&long).chars().count(), MAX_FIELD_CHARS - 1);
+        assert!(clamp(&long).ends_with('a'));
+
+        // Same for a joiner left dangling at the end of an emoji sequence.
+        let joined = format!("{}\u{200D}\u{1F469}", "a".repeat(MAX_FIELD_CHARS - 1));
+        assert_eq!(clamp(&joined).chars().count(), MAX_FIELD_CHARS - 1);
+        assert!(!clamp(&joined).ends_with('\u{200D}'));
+    }
+
+    #[test]
+    fn clamp_pads_a_string_that_truncation_emptied() {
+        // Nothing but marks: the whole head is stripped, and the result still
+        // has to satisfy Discord's minimum.
+        let marks = "\u{0301}".repeat(MAX_FIELD_CHARS + 10);
+        assert_eq!(clamp(&marks).chars().count(), MIN_FIELD_CHARS);
     }
 
     fn built(catalog: Option<&CatalogInfo>) -> Map<String, Value> {
