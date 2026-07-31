@@ -4,7 +4,14 @@
 //! a fixed activity so it can be eyeballed on a Discord profile. Answers PINGs
 //! and clears the activity on exit, the same way the real client does.
 //!
-//! Usage: `cargo run --bin discord_probe [apple-music|spotify]`
+//! The activity carries cover art, because "the card appears but without its
+//! thumbnail" has two completely different causes — the catalog lookup found
+//! nothing, or Discord would not fetch what it was given — and this is the only
+//! place they can be told apart. It sends a known-good artwork URL with no
+//! lookup involved, so a thumbnail here means the Discord half works and the
+//! problem is upstream in `catalog`.
+//!
+//! Usage: `cargo run --bin discord_probe [apple-music|spotify] [artwork-url]`
 
 #[cfg(not(windows))]
 fn main() {
@@ -33,14 +40,20 @@ mod imp {
     /// How long to leave the activity up before clearing it.
     const HOLD: Duration = Duration::from_secs(60);
 
-    fn sample_activity(source: MusicSourceId) -> Value {
+    /// A real cover from the host and in the size the catalog actually
+    /// produces. Both are part of the question — what has to be established is
+    /// that Discord will fetch an `is1-ssl.mzstatic.com/…/512x512bb.jpg` for
+    /// *this* application id, not that it will fetch some image somewhere.
+    const SAMPLE_ARTWORK: &str = "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/41/a0/b6/41a0b6b9-a720-25e5-fc69-7e9c3ca1296e/26UMGIM73217.rgb.jpg/512x512bb.jpg";
+
+    fn sample_activity(source: MusicSourceId, artwork: &str) -> Value {
         let mut track = TrackInfo::new("Ceyrad Probe", "Test Artist", "Test Album");
         track.duration_sec = Some(240.0);
         track.position_sec = Some(30.0);
 
         let catalog = CatalogInfo {
             song_url: Some("https://example.com/song".into()),
-            artwork_url: None,
+            artwork_url: Some(artwork.to_string()),
             ..Default::default()
         };
 
@@ -61,7 +74,13 @@ mod imp {
             _ => MusicSourceId::AppleMusic,
         };
         let client_id = source.discord_client_id();
+        let artwork = std::env::args().nth(2).unwrap_or_else(|| {
+            // Not a lookup: the point is to take the catalog out of the picture
+            // entirely, so a missing thumbnail can only be Discord's doing.
+            SAMPLE_ARTWORK.to_string()
+        });
         println!("source: {} / client_id: {client_id}", source.display_name());
+        println!("artwork: {artwork}");
 
         let pipe = Pipe::connect()?;
         println!("connected");
@@ -104,17 +123,25 @@ mod imp {
                                 if !ready && frame.event().as_deref() == Some("READY") {
                                     ready = true;
                                     nonce += 1;
-                                    println!("-> SET_ACTIVITY");
+                                    let activity = sample_activity(source, &artwork);
+                                    // Printed in full: if Discord answers with
+                                    // an ERROR frame, the next thing anyone
+                                    // will want is the exact payload it
+                                    // objected to.
+                                    println!("-> SET_ACTIVITY {activity}");
                                     pipe.send(
                                         Opcode::Frame,
                                         &set_activity_payload(
-                                            Some(sample_activity(source)),
+                                            Some(activity),
                                             std::process::id(),
                                             &format!("probe-{nonce}"),
                                         ),
                                     )?;
                                     println!(
-                                        "check your Discord profile — clearing in {}s",
+                                        "check your Discord profile from another account — a \
+                                         thumbnail means Discord fetches the artwork url fine, \
+                                         so a missing one in the real app is the catalog lookup. \
+                                         Clearing in {}s",
                                         HOLD.as_secs()
                                     );
                                 }

@@ -21,7 +21,7 @@ the macOS menu can do is in its menu too.
 | `installer/` — Inno Setup installer | Done — see [Installing](#installing) |
 | Code signing | Not planned — matches the macOS build, which also ships unsigned |
 
-191 tests cover everything above that is not a platform call.
+197 tests cover everything above that is not a platform call.
 
 ## Running it
 
@@ -112,12 +112,32 @@ an automatic replace would be handing you an unsigned binary with nothing to
 verify it against. Downloading it yourself, from a page you can look at first, is
 the honest version of that until signing exists.
 
-### Why the tray does not cost anything
+### What this costs while it sits there
 
 The icon's window, Discord's pipe, the media-session watcher and the app's own
 timers are all waited on together, in one thread, by a single
 `MsgWaitForMultipleObjects`. Nothing polls, so an idle app measures 0 ms of CPU
 between songs — adding a UI did not change that.
+
+**With no player running it is not woken at all.** SMTC is system-wide, so the
+naive version of this app subscribes to every media session on the machine and
+then wakes up several times a second because a video is playing in a browser
+tab. Only sessions belonging to a source you are actually watching are
+subscribed to; everything else is noted once, in the log, and ignored.
+`SessionsChanged` is what notices a player starting later, and it is the same
+event the macOS build gets from `NSWorkspace`.
+
+**While a track plays it does as little per event as it can.** Apple Music for
+Windows raises `TimelinePropertiesChanged` roughly every 280ms for the whole
+length of a track. That event is the only way to catch a seek, so it cannot be
+ignored — but it cannot change the title, the artist or the album either, so it
+does not pay for `TryGetMediaPropertiesAsync`, which is a call into the player's
+own process. Those strings are cached and reused until `MediaPropertiesChanged`,
+a change of playback status, or a change of reported duration says otherwise;
+the status rows are rebuilt only when something they are made of moved; and a
+reading of a track already playing is folded into the one already held rather
+than replacing it. What is left on the 280ms path is two property reads and no
+allocation to speak of.
 
 Opening the menu runs a nested message loop for as long as it is on screen, so
 player and Discord events are noticed late rather than promptly while it is
@@ -215,9 +235,29 @@ test activity, then clears it after 60 seconds.
 cargo run --bin discord_probe
 # or, to test the Spotify application id:
 cargo run --bin discord_probe spotify
+# or with a particular artwork url:
+cargo run --bin discord_probe apple-music https://example.com/cover.jpg
 ```
 
 Discord must be running. Buttons and the "Listening to" status are not visible
 on your own profile — check from another account. Worth capturing: whether
 `READY` arrives, whether the status appears, and what happens if Discord is
 quit while the probe is connected.
+
+**This is also how to tell a missing thumbnail apart from a missing lookup.**
+The activity carries a real `is1-ssl.mzstatic.com/…/512x512bb.jpg` cover with no
+catalog involved, so a thumbnail here means Discord fetches what this app sends
+and a card without one in the real app is the lookup, not the protocol. Going
+the other way, `ceyrad_dev` ends every send with `[art <url>]` or `[no art]`,
+and says what the lookup did:
+
+```
+[14:02:07] Apple Music: looking up "Brand New" by "Mrs. GREEN APPLE"
+[14:02:07] -> Brand New — Mrs. GREEN APPLE [no art]
+[14:02:08] Apple Music: catalog resolved
+[14:02:09] -> Brand New — Mrs. GREEN APPLE [art https://is1-ssl.mzstatic.com/…]
+```
+
+`catalog not found` means the search matched nothing for that track and there
+will be no artwork for it; `catalog lookup failed (…)` carries the HTTP status,
+so a rate limit (403) reads differently from being offline.

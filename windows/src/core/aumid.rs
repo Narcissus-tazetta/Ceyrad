@@ -36,42 +36,62 @@ impl AumidOverrides {
     }
 }
 
+/// Everything here compares in place rather than folding a lowercase copy
+/// first. This is asked once per media session on the machine every time the
+/// session list moves — browsers mint one per profile and per tab — and an
+/// allocation per candidate to answer "no" is the wrong shape for a question
+/// whose answer is almost always no.
 pub fn source_for_aumid(aumid: &str, overrides: &AumidOverrides) -> Option<MusicSourceId> {
-    let id = aumid.trim().to_ascii_lowercase();
+    let id = aumid.trim();
     if id.is_empty() {
         return None;
     }
 
     // Overrides win, so a user can redirect an id we would otherwise misread.
-    if matches_any(&id, &overrides.apple_music) {
+    if matches_any(id, &overrides.apple_music) {
         return Some(MusicSourceId::AppleMusic);
     }
-    if matches_any(&id, &overrides.spotify) {
+    if matches_any(id, &overrides.spotify) {
         return Some(MusicSourceId::Spotify);
     }
 
-    if APPLE_MUSIC_EXECUTABLES.contains(&id.as_str())
-        || APPLE_MUSIC_PACKAGE_PREFIXES
-            .iter()
-            .any(|prefix| id.starts_with(prefix))
-    {
+    if matches_built_in(id, &APPLE_MUSIC_EXECUTABLES, &APPLE_MUSIC_PACKAGE_PREFIXES) {
         return Some(MusicSourceId::AppleMusic);
     }
-    if SPOTIFY_EXECUTABLES.contains(&id.as_str())
-        || SPOTIFY_PACKAGE_PREFIXES
-            .iter()
-            .any(|prefix| id.starts_with(prefix))
-    {
+    if matches_built_in(id, &SPOTIFY_EXECUTABLES, &SPOTIFY_PACKAGE_PREFIXES) {
         return Some(MusicSourceId::Spotify);
     }
     None
+}
+
+fn matches_built_in(id: &str, executables: &[&str], prefixes: &[&str]) -> bool {
+    executables
+        .iter()
+        .any(|executable| id.eq_ignore_ascii_case(executable))
+        || prefixes
+            .iter()
+            .any(|prefix| starts_with_ignore_ascii_case(id, prefix))
 }
 
 /// An override matches either exactly or as a prefix, so a user can paste
 /// either the whole AUMID from the probe or just the package family.
 fn matches_any(id: &str, patterns: &[String]) -> bool {
     patterns.iter().any(|pattern| {
-        let pattern = pattern.trim().to_ascii_lowercase();
-        !pattern.is_empty() && (id == pattern || id.starts_with(&pattern))
+        let pattern = pattern.trim();
+        !pattern.is_empty()
+            && (id.eq_ignore_ascii_case(pattern) || starts_with_ignore_ascii_case(id, pattern))
     })
+}
+
+/// `str::starts_with` that ignores ASCII case, without building a folded copy.
+///
+/// Compared as bytes, which for UTF-8 is the same question: a byte prefix can
+/// only end on a character boundary if the characters themselves matched, so
+/// this never claims a match that a character-wise comparison would refuse.
+/// Only ASCII case is folded, exactly as the `to_ascii_lowercase` this replaced
+/// did — a Turkish dotless i in an AUMID stays what it is.
+fn starts_with_ignore_ascii_case(id: &str, prefix: &str) -> bool {
+    id.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
 }
