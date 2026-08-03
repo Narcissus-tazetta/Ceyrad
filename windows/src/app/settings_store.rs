@@ -128,6 +128,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
+    use crate::core::settings_model::ButtonSlot;
     use crate::core::settings_model::LinkType;
 
     /// A directory of this test's own, since these touch the real filesystem.
@@ -146,16 +147,16 @@ mod tests {
     fn a_saved_file_loads_back_unchanged() {
         let path = scratch("roundtrip").join(FILE_NAME);
         let mut settings = Settings::default();
-        settings.set_button1_type(LinkType::Album);
-        settings.set_button2_label("My Label");
+        settings.set_button_type(ButtonSlot::One, LinkType::Album);
+        settings.set_button_label(ButtonSlot::Two, "My Label");
         settings.pause_hide_minutes = 10;
 
         save_to(&path, &settings).expect("save");
         let (loaded, warning) = load_from(&path);
 
         assert!(warning.is_none(), "{warning:?}");
-        assert_eq!(loaded.button1_type, LinkType::Album);
-        assert_eq!(loaded.button2_label(None), "My Label");
+        assert_eq!(loaded.button_type(ButtonSlot::One), LinkType::Album);
+        assert_eq!(loaded.button_label(ButtonSlot::Two), "My Label");
         assert_eq!(loaded.pause_hide_minutes, 10);
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -206,7 +207,7 @@ mod tests {
         std::fs::write(&path, "{ this is not json").expect("write");
 
         let (settings, warning) = load_from(&path);
-        assert_eq!(settings.button1_type, LinkType::Song);
+        assert_eq!(settings.button_type(ButtonSlot::One), LinkType::Song);
         assert!(warning.is_some(), "a silent reset would be worse");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -222,7 +223,7 @@ mod tests {
         let (settings, warning) = load_from(&path);
         assert!(warning.is_none());
         assert_eq!(settings.pause_hide_minutes, 1);
-        assert_eq!(settings.button2_type, LinkType::Repository);
+        assert_eq!(settings.button_type(ButtonSlot::Two), LinkType::Repository);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

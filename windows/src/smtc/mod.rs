@@ -45,8 +45,8 @@ use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
 };
 
-use crate::core::aumid::{source_for_aumid, AumidOverrides};
-use crate::core::models::{MusicSourceId, PlayerState, TrackInfo};
+use crate::core::aumid::{is_apple_music, AumidOverrides};
+use crate::core::models::{PlayerState, TrackInfo};
 use crate::core::track_metadata::split_combined_artist;
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winrt::join_with_timeout;
@@ -94,14 +94,6 @@ pub struct Snapshot {
     /// only on a pass that rebuilt the subscriptions, which is when the session
     /// list actually moved, and is empty on every other pass.
     pub unknown_aumids: Vec<String>,
-}
-
-impl Snapshot {
-    pub fn get(&self, source: MusicSourceId) -> Option<&SessionState> {
-        match source {
-            MusicSourceId::AppleMusic => self.apple_music.as_ref(),
-        }
-    }
 }
 
 /// WinRT event registrations are plain `i64` tokens in this binding.
@@ -155,21 +147,19 @@ struct SessionCache {
 /// token left unregistered would keep its handler — and the session it closes
 /// over — alive for the life of the process.
 struct Subscription {
-    source: MusicSourceId,
     session: Session,
     media: Option<Token>,
     playback: Option<Token>,
     timeline: Option<Token>,
-    /// Per subscription rather than per source, so two sessions claiming the
-    /// same source — iTunes and Apple Music open together — cannot be served
-    /// each other's title.
+    /// Per subscription, so two sessions that both look like Apple Music —
+    /// iTunes and Apple Music open together — cannot be served each other's
+    /// title.
     cache: SessionCache,
 }
 
 impl Subscription {
-    fn new(source: MusicSourceId, session: Session) -> Self {
+    fn new(session: Session) -> Self {
         Self {
-            source,
             session,
             media: None,
             playback: None,
@@ -308,16 +298,8 @@ impl Watcher {
         for subscription in &mut self.subscriptions {
             // Destructured so the session can be read while its own cache is
             // written; they are separate fields of the same subscription.
-            let Subscription {
-                source,
-                session,
-                cache,
-                ..
-            } = subscription;
-            let state = read_session(session, cache, refresh, &mut retry_metadata);
-            match source {
-                MusicSourceId::AppleMusic => snapshot.apple_music = Some(state),
-            }
+            let Subscription { session, cache, .. } = subscription;
+            snapshot.apple_music = Some(read_session(session, cache, refresh, &mut retry_metadata));
         }
 
         if retry_metadata {
@@ -346,15 +328,15 @@ impl Watcher {
                 continue;
             };
             let aumid = aumid.to_string();
-            let Some(source) = source_for_aumid(&aumid, &self.overrides) else {
+            if !is_apple_music(&aumid, &self.overrides) {
                 self.unknown_aumids.push(aumid);
                 continue;
-            };
+            }
 
             // Built in place so that a failure on the second or third
             // registration still unregisters the first: `subscription` is
             // dropped on the way out and hands its tokens back.
-            let mut subscription = Subscription::new(source, session);
+            let mut subscription = Subscription::new(session);
             subscription.media = Some(
                 subscription
                     .session

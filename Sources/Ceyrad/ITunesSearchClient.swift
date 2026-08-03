@@ -37,15 +37,22 @@ final class ITunesSearchClient {
         session = URLSession(configuration: config)
     }
 
+    /// カタログを引く。completionはメインスレッド。
+    ///
+    /// 結果は`CatalogOutcome`で返す。「見つからなかった」（ローカル取り込み曲など）は
+    /// 確定した答えなので呼び出し側は訊き直さないが、「訊けなかった」（オフライン等）は
+    /// 答えではないので再試行に値する——この2つを`nil`ひとつに潰すと、一時的な回線断が
+    /// その曲のアートワークを永久に失わせることになる。
     func resolve(
         name: String, artist: String, album: String,
-        completion: @escaping (CatalogInfo?) -> Void
+        completion: @escaping (CatalogOutcome) -> Void
     ) {
         let key = [name, artist, album].joined(separator: "\u{1F}").lowercased()
         queue.async { [weak self] in
             guard let self else { return }
             if let cached = self.cache[key] {
-                DispatchQueue.main.async { completion(cached) }
+                let outcome = cached.map(CatalogOutcome.found) ?? .missing
+                DispatchQueue.main.async { completion(outcome) }
                 return
             }
             // 新しい曲のリクエストで、まだ実行されていない古い検索を置き換える。
@@ -65,7 +72,7 @@ final class ITunesSearchClient {
 
     private func performSearch(
         key: String, name: String, artist: String, album: String,
-        completion: @escaping (CatalogInfo?) -> Void
+        completion: @escaping (CatalogOutcome) -> Void
     ) {
         nextAllowedRequest = Date().addingTimeInterval(minRequestInterval)
         var components = URLComponents(string: "https://itunes.apple.com/search")!
@@ -78,34 +85,35 @@ final class ITunesSearchClient {
             URLQueryItem(name: "country", value: Locale.current.region?.identifier ?? "US"),
         ]
         guard let url = components.url else {
-            DispatchQueue.main.async { completion(nil) }
+            DispatchQueue.main.async { completion(.failed) }
             return
         }
         session.dataTask(with: url) { [weak self] data, _, _ in
             guard let self else { return }
-            var info: CatalogInfo?
-            var gotResponse = false
-            if let data,
+            // 応答を読めなかった＝答えが得られていない。答えが得られた場合だけ
+            // 「見つかった / 見つからなかった」を確定させる。
+            guard let data,
                 let response = try? JSONDecoder().decode(SearchResponse.self, from: data)
-            {
-                gotResponse = true
-                if let best = Self.pickBest(
-                    from: response.results,
-                    name: name, artist: artist, album: album
-                ) {
-                    info = CatalogInfo(
-                        songURL: best.trackViewUrl,
-                        artistURL: best.artistViewUrl,
-                        albumURL: best.collectionViewUrl,
-                        artworkURL: best.artworkUrl100?
-                            .replacingOccurrences(of: "100x100bb", with: "512x512bb")
-                    )
-                }
+            else {
+                DispatchQueue.main.async { completion(.failed) }
+                return
+            }
+            let info = Self.pickBest(
+                from: response.results, name: name, artist: artist, album: album
+            ).map { best in
+                CatalogInfo(
+                    songURL: best.trackViewUrl,
+                    artistURL: best.artistViewUrl,
+                    albumURL: best.collectionViewUrl,
+                    artworkURL: best.artworkUrl100?
+                        .replacingOccurrences(of: "100x100bb", with: "512x512bb")
+                )
             }
             self.queue.async {
-                // ネットワークエラー時はキャッシュしない（一時的なオフラインを恒久化しない）
-                if gotResponse { self.store(key: key, info: info) }
-                DispatchQueue.main.async { completion(info) }
+                // ネットワークエラー時はここに来ない（一時的なオフラインを恒久化しない）
+                self.store(key: key, info: info)
+                let outcome = info.map(CatalogOutcome.found) ?? .missing
+                DispatchQueue.main.async { completion(outcome) }
             }
         }.resume()
     }

@@ -184,8 +184,8 @@ final class ActivityBuilderTests: XCTestCase {
     // MARK: - ボタン
 
     func testDuplicateButtonURLsAreDeduplicated() {
-        settings.button1Type = .repository
-        settings.button2Type = .repository
+        settings.setButtonType(.one, .repository)
+        settings.setButtonType(.two, .repository)
         let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: nil, settings: settings
         )
@@ -207,8 +207,8 @@ final class ActivityBuilderTests: XCTestCase {
     }
 
     func testBothButtonsOffOmitsButtonsKey() {
-        settings.button1Type = .disabled
-        settings.button2Type = .disabled
+        settings.setButtonType(.one, .disabled)
+        settings.setButtonType(.two, .disabled)
         let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: catalog(), settings: settings
         )
@@ -216,7 +216,7 @@ final class ActivityBuilderTests: XCTestCase {
     }
 
     func testButton2PromotedWhenButton1IsOff() {
-        settings.button1Type = .disabled
+        settings.setButtonType(.one, .disabled)
         let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: catalog(), settings: settings
         )
@@ -237,8 +237,8 @@ final class ActivityBuilderTests: XCTestCase {
     }
 
     func testInvalidCustomURLIsSkipped() {
-        settings.button1Type = .custom
-        settings.button2Type = .disabled
+        settings.setButtonType(.one, .custom)
+        settings.setButtonType(.two, .disabled)
         settings.customURL = "ftp://example.com"
         let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: nil, settings: settings
@@ -247,10 +247,9 @@ final class ActivityBuilderTests: XCTestCase {
     }
 
     func testSongButtonLabelFollowsSource() {
-        settings.button2Type = .disabled
+        settings.setButtonType(.two, .disabled)
         let appleMusic = ActivityBuilder.build(
-            track: track(), playerState: .playing, catalog: catalog(),
-            settings: settings, source: .appleMusic
+            track: track(), playerState: .playing, catalog: catalog(), settings: settings
         )
         XCTAssertEqual(
             (appleMusic["buttons"] as? [[String: String]])?.first?["label"],
@@ -259,18 +258,17 @@ final class ActivityBuilderTests: XCTestCase {
     }
 
     func testCustomButtonLabelWinsOverSourceDefault() {
-        settings.button2Type = .disabled
-        settings.button1Label = "My Label"
+        settings.setButtonType(.two, .disabled)
+        settings.setButtonLabel(.one, "My Label")
         let activity = ActivityBuilder.build(
-            track: track(), playerState: .playing, catalog: catalog(),
-            settings: settings, source: .appleMusic
+            track: track(), playerState: .playing, catalog: catalog(), settings: settings
         )
         XCTAssertEqual((activity["buttons"] as? [[String: String]])?.first?["label"], "My Label")
     }
 
     func testButtonLabelIsTruncatedTo32Characters() {
-        settings.button2Type = .disabled
-        settings.button1Label = String(repeating: "x", count: 64)
+        settings.setButtonType(.two, .disabled)
+        settings.setButtonLabel(.one, String(repeating: "x", count: 64))
         let activity = ActivityBuilder.build(
             track: track(), playerState: .playing, catalog: catalog(), settings: settings
         )

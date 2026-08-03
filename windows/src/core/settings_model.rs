@@ -1,10 +1,38 @@
 use serde::{Deserialize, Serialize};
 
 use super::i18n::{t, AppLanguage};
-use super::models::MusicSourceId;
 use super::text;
 
 pub const DEFAULT_REPOSITORY_URL: &str = "https://github.com/Narcissus-tazetta/Ceyrad";
+
+/// Which of the two configurable Discord buttons something is about.
+///
+/// The two are entirely symmetrical, so carrying the slot as a value is what
+/// keeps every rule about them from being written down twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonSlot {
+    One,
+    Two,
+}
+
+impl ButtonSlot {
+    pub const ALL: [ButtonSlot; 2] = [ButtonSlot::One, ButtonSlot::Two];
+
+    pub fn number(self) -> u8 {
+        match self {
+            ButtonSlot::One => 1,
+            ButtonSlot::Two => 2,
+        }
+    }
+
+    /// The link type a fresh install starts with: the song page and the repo.
+    fn default_type(self) -> LinkType {
+        match self {
+            ButtonSlot::One => LinkType::Song,
+            ButtonSlot::Two => LinkType::Repository,
+        }
+    }
+}
 
 /// Minutes of continuous pause before the status is cleared.
 /// `-1` never clears, `0` clears immediately.
@@ -45,9 +73,10 @@ impl LinkType {
         }
     }
 
-    /// Label a button shows until the user edits it. Only the song link varies
-    /// by source; `None` means "for menu display", which reads as Apple Music.
-    pub fn default_label(self, _source: Option<MusicSourceId>) -> &'static str {
+    /// Label a button shows until the user edits it. Discord-facing, so never
+    /// localized. Also the value that decides whether a stored label counts as
+    /// a customization.
+    pub fn default_label(self) -> &'static str {
         match self {
             LinkType::Song => "Play on Apple Music",
             LinkType::Artist => "View Artist",
@@ -55,19 +84,6 @@ impl LinkType {
             LinkType::Custom => "Open Link",
             LinkType::Repository => "About This App",
             LinkType::Disabled => "",
-        }
-    }
-
-    /// Every string treated as a default for this link type, used to decide
-    /// whether the user has customized the label.
-    pub fn default_labels(self) -> &'static [&'static str] {
-        match self {
-            LinkType::Song => &["Play on Apple Music"],
-            LinkType::Artist => &["View Artist"],
-            LinkType::Album => &["View Album"],
-            LinkType::Custom => &["Open Link"],
-            LinkType::Repository => &["About This App"],
-            LinkType::Disabled => &[""],
         }
     }
 }
@@ -114,10 +130,15 @@ impl BadgeLabelType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub button1_type: LinkType,
+    // The four button fields are private on purpose: every rule about them —
+    // which default applies, when a label stops following its type — lives in
+    // the `ButtonSlot` accessors below, and a direct write would sidestep all
+    // of it. The names stay `button1_*` because they are the keys in the
+    // settings file on disk.
+    button1_type: LinkType,
     /// `None` means the label follows `button1_type`'s default.
     button1_label: Option<String>,
-    pub button2_type: LinkType,
+    button2_type: LinkType,
     button2_label: Option<String>,
     pub custom_url: String,
     pub repository_url: String,
@@ -129,9 +150,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            button1_type: LinkType::Song,
+            button1_type: ButtonSlot::One.default_type(),
             button1_label: None,
-            button2_type: LinkType::Repository,
+            button2_type: ButtonSlot::Two.default_type(),
             button2_label: None,
             custom_url: String::new(),
             repository_url: DEFAULT_REPOSITORY_URL.to_string(),
@@ -143,64 +164,61 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn button1_label(&self, source: Option<MusicSourceId>) -> String {
-        label_for(&self.button1_label, self.button1_type, source)
-    }
-
-    pub fn button2_label(&self, source: Option<MusicSourceId>) -> String {
-        label_for(&self.button2_label, self.button2_type, source)
-    }
-
-    pub fn set_button1_type(&mut self, new_value: LinkType) {
-        set_type(&mut self.button1_label, self.button1_type);
-        self.button1_type = new_value;
-    }
-
-    pub fn set_button2_type(&mut self, new_value: LinkType) {
-        set_type(&mut self.button2_label, self.button2_type);
-        self.button2_type = new_value;
-    }
-
-    pub fn set_button1_label(&mut self, new_value: &str) {
-        set_label(&mut self.button1_label, self.button1_type, new_value);
-    }
-
-    pub fn set_button2_label(&mut self, new_value: &str) {
-        set_label(&mut self.button2_label, self.button2_type, new_value);
-    }
-}
-
-fn label_for(
-    stored: &Option<String>,
-    link_type: LinkType,
-    source: Option<MusicSourceId>,
-) -> String {
-    match stored {
-        Some(label) => label.clone(),
-        None => link_type.default_label(source).to_string(),
-    }
-}
-
-/// Drops the stored label when it is still one of the old type's defaults, so
-/// an uncustomized label keeps following the link type. A label the user
-/// actually chose survives the change.
-fn set_type(stored: &mut Option<String>, old: LinkType) {
-    if let Some(label) = stored.as_deref() {
-        if old.default_labels().contains(&label) {
-            *stored = None;
+    pub fn button_type(&self, slot: ButtonSlot) -> LinkType {
+        match slot {
+            ButtonSlot::One => self.button1_type,
+            ButtonSlot::Two => self.button2_type,
         }
     }
-}
 
-/// An empty label, or one equal to the current type's default, is not a
-/// customization — clearing it keeps the label following the type.
-fn set_label(stored: &mut Option<String>, link_type: LinkType, new_value: &str) {
-    // Cut the way `activity_builder` cuts the fields it sends, so a label that
-    // ends in an emoji does not come back from the dialog as half of one.
-    let value = text::truncate(new_value, MAX_LABEL_CHARS);
-    if value.is_empty() || link_type.default_labels().contains(&value) {
-        *stored = None;
-    } else {
-        *stored = Some(value.to_string());
+    pub fn button_label(&self, slot: ButtonSlot) -> String {
+        match self.stored_label(slot) {
+            Some(label) => label.clone(),
+            None => self.button_type(slot).default_label().to_string(),
+        }
+    }
+
+    /// Changes where the button points.
+    ///
+    /// A label that is still the old type's default is dropped, so an
+    /// uncustomized label keeps following the destination. A label the user
+    /// actually chose survives the change.
+    pub fn set_button_type(&mut self, slot: ButtonSlot, new_value: LinkType) {
+        let old_default = self.button_type(slot).default_label();
+        let stored = self.stored_label_mut(slot);
+        if stored.as_deref() == Some(old_default) {
+            *stored = None;
+        }
+        match slot {
+            ButtonSlot::One => self.button1_type = new_value,
+            ButtonSlot::Two => self.button2_type = new_value,
+        }
+    }
+
+    /// An empty label, or one equal to the current type's default, is not a
+    /// customization — clearing it keeps the label following the type.
+    pub fn set_button_label(&mut self, slot: ButtonSlot, new_value: &str) {
+        // Cut the way `activity_builder` cuts the fields it sends, so a label
+        // that ends in an emoji does not come back from the dialog as half of
+        // one.
+        let value = text::truncate(new_value, MAX_LABEL_CHARS);
+        let is_default = value.is_empty() || value == self.button_type(slot).default_label();
+        let value = value.to_string();
+        let stored = self.stored_label_mut(slot);
+        *stored = if is_default { None } else { Some(value) };
+    }
+
+    fn stored_label(&self, slot: ButtonSlot) -> Option<&String> {
+        match slot {
+            ButtonSlot::One => self.button1_label.as_ref(),
+            ButtonSlot::Two => self.button2_label.as_ref(),
+        }
+    }
+
+    fn stored_label_mut(&mut self, slot: ButtonSlot) -> &mut Option<String> {
+        match slot {
+            ButtonSlot::One => &mut self.button1_label,
+            ButtonSlot::Two => &mut self.button2_label,
+        }
     }
 }

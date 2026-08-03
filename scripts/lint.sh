@@ -13,12 +13,12 @@ fi
 
 if [[ "${1:-}" == "--fix" ]]; then
   echo "[1/2] swift format format -i"
-  swift format format -i -r --configuration .swift-format Sources
+  swift format format -i -r --configuration .swift-format Sources Tests
   echo "[2/2] swiftlint --fix"
   swiftlint --fix --quiet
 else
   echo "[1/2] swift format lint"
-  swift format lint -r --configuration .swift-format --strict Sources
+  swift format lint -r --configuration .swift-format --strict Sources Tests
   echo "[2/2] swiftlint lint"
   swiftlint lint --quiet --strict
 fi

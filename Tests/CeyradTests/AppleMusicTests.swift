@@ -2,9 +2,9 @@ import XCTest
 
 @testable import Ceyrad
 
-final class AppleMusicNotificationTests: XCTestCase {
+final class AppleMusicTests: XCTestCase {
     func testPlayingWithAllKeys() {
-        let (state, track) = AppleMusicNotification.parse([
+        let (state, track) = AppleMusic.parse([
             "Player State": "Playing",
             "Name": "Song",
             "Artist": "Artist",
@@ -21,13 +21,13 @@ final class AppleMusicNotificationTests: XCTestCase {
     }
 
     func testStoppedYieldsNoTrack() {
-        let (state, track) = AppleMusicNotification.parse(["Player State": "Stopped"])
+        let (state, track) = AppleMusic.parse(["Player State": "Stopped"])
         XCTAssertEqual(state, .stopped)
         XCTAssertNil(track)
     }
 
     func testPausedWithMissingKeys() {
-        let (state, track) = AppleMusicNotification.parse(["Player State": "Paused"])
+        let (state, track) = AppleMusic.parse(["Player State": "Paused"])
         XCTAssertEqual(state, .paused)
         XCTAssertEqual(track?.name, "")
         XCTAssertNil(track?.durationSec)
@@ -36,7 +36,7 @@ final class AppleMusicNotificationTests: XCTestCase {
     func testIdentityJoinsFieldsWithAUnitSeparator() {
         // トラック変更検知・カタログ再解決の要求がここに依存するため、
         // 結合フォーマット自体を固定しておく。
-        let (_, track) = AppleMusicNotification.parse([
+        let (_, track) = AppleMusic.parse([
             "Player State": "Playing",
             "Name": "Song",
             "Artist": "Artist",

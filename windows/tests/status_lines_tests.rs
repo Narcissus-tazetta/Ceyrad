@@ -3,35 +3,35 @@
 //! so it is worth pinning down.
 
 use ceyrad::core::i18n::AppLanguage;
-use ceyrad::core::models::{ConnState, PlayerState, SourceState, TrackInfo};
+use ceyrad::core::models::{ConnState, MusicState, PlayerState, TrackInfo};
 use ceyrad::core::status_lines::{lines, Input};
 
-fn playing(name: &str, artist: &str) -> SourceState {
-    SourceState {
+fn playing(name: &str, artist: &str) -> MusicState {
+    MusicState {
         running: true,
         player_state: PlayerState::Playing,
         track: Some(TrackInfo::new(name, artist, "Album")),
-        ..SourceState::default()
+        ..MusicState::default()
     }
 }
 
-fn paused(name: &str, artist: &str) -> SourceState {
-    SourceState {
+fn paused(name: &str, artist: &str) -> MusicState {
+    MusicState {
         player_state: PlayerState::Paused,
         ..playing(name, artist)
     }
 }
 
-fn stopped() -> SourceState {
-    SourceState {
+fn stopped() -> MusicState {
+    MusicState {
         running: true,
-        ..SourceState::default()
+        ..MusicState::default()
     }
 }
 
-fn input(apple_music: &SourceState) -> Input<'_> {
+fn input(music: &MusicState) -> Input<'_> {
     Input {
-        apple_music,
+        music,
         discord_state: ConnState::Disconnected,
         language: AppLanguage::En,
     }
@@ -39,7 +39,7 @@ fn input(apple_music: &SourceState) -> Input<'_> {
 
 #[test]
 fn not_running_reports_as_such() {
-    let off = SourceState::default();
+    let off = MusicState::default();
     let rows = lines(&input(&off));
     assert_eq!(
         rows,
@@ -87,7 +87,7 @@ fn the_discord_row_follows_the_connection_once_a_player_is_up() {
 
 #[test]
 fn the_discord_row_says_idle_while_nothing_is_playing() {
-    let off = SourceState::default();
+    let off = MusicState::default();
     let mut i = input(&off);
     // Even mid-handshake: with no player running there is nothing to report.
     i.discord_state = ConnState::Connecting;

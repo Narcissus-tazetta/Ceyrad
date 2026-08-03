@@ -4,7 +4,14 @@
 //! thread driven by a single wait: Discord's pipe, the SMTC wakeup event and
 //! the app's own timers are all waited on together, so an idle app performs no
 //! work at all — no polling loop, no periodic timer, no wakeups between songs.
+//!
+//! What this type does *not* own is as deliberate as what it does. The record
+//! of what Discord is showing and the reconnect backoff live behind
+//! [`connection::Connection`]; every deadline lives in [`Timers`]. Both were
+//! loose fields here, and both carried invariants that had to be re-established
+//! by hand at a dozen call sites.
 
+pub mod connection;
 pub mod settings_store;
 
 use std::collections::HashSet;
@@ -20,18 +27,21 @@ use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::SetEvent;
 
+use crate::app::connection::{Connection, Sent};
 use crate::catalog::{Outcome, Request as CatalogRequest, Resolver};
 use crate::core::activity_builder;
+use crate::core::apple_music;
 use crate::core::debouncer::Debouncer;
 use crate::core::i18n::t;
-use crate::core::menu_model::{self, ButtonSlot, MenuAction};
-use crate::core::models::{ConnState, MusicSourceId, PlayerState, SourceState, SourceStates};
-use crate::core::settings_model::Settings;
+use crate::core::menu_model::{self, MenuAction};
+use crate::core::models::{ConnState, MusicState, PlayerState};
+use crate::core::settings_model::{ButtonSlot, Settings};
 use crate::core::status_lines;
+use crate::core::timers::{Timer, Timers};
 use crate::core::track_change::{position_jumped, same_identity};
 use crate::core::update_check::Release;
 use crate::core::url_prompt;
-use crate::discord::client::{Client, Event as DiscordEvent};
+use crate::discord::client::Event as DiscordEvent;
 use crate::discord::pipe::{Event as WakeEvent, Wakeup};
 use crate::launch_at_login;
 use crate::smtc::Watcher;
@@ -42,8 +52,6 @@ use crate::updater::{self, Outcome as UpdateOutcome, Updater};
 const DEBOUNCE: Duration = Duration::from_millis(800);
 /// Ceiling on how long that coalescing may postpone a send; see `Debouncer`.
 const MAX_DEBOUNCE: Duration = Duration::from_millis(2_000);
-/// Reconnect backoff, 1s doubling to this ceiling.
-const MAX_RECONNECT_DELAY_SECS: u64 = 60;
 /// How long Discord gets to answer a handshake with READY.
 ///
 /// A pipe that opens but never replies would otherwise leave the client in
@@ -73,31 +81,25 @@ static WAKE_HANDLE: AtomicIsize = AtomicIsize::new(0);
 
 pub struct App {
     settings: Settings,
-    sources: SourceStates,
-    active_source: Option<MusicSourceId>,
+    music: MusicState,
+    /// Whether anything is currently on Discord. The presence is cleared and
+    /// rebuilt as this flips.
+    displaying: bool,
 
-    discord: Client,
+    connection: Connection,
     watcher: Watcher,
     catalog: Resolver,
     updater: Updater,
     wake: Arc<WakeEvent>,
-    started: Instant,
     /// Absent in the console build, which has no UI at all.
     tray: Option<Tray>,
 
+    timers: Timers,
     debouncer: Debouncer,
     pending_activity: Option<Option<Map<String, Value>>>,
-    /// What Discord is currently showing, so an unchanged rebuild is not resent.
-    last_sent: Option<Option<Map<String, Value>>>,
 
-    pause_hide_at: Option<Instant>,
     paused_timed_out: bool,
 
-    reconnect_at: Option<Instant>,
-    reconnect_attempt: u32,
-    handshake_deadline: Option<Instant>,
-
-    update_check_at: Option<Instant>,
     /// The newest release found so far, kept so the menu can offer it and the
     /// click knows where to send the browser.
     update_available: Option<Release>,
@@ -114,10 +116,10 @@ pub struct App {
     /// times a second while a track plays — almost always to conclude that
     /// nothing changed. The flag is allowed to be set when nothing did (the
     /// cost is one wasted rebuild); it must never be clear when something has,
-    /// so everything that writes a source's `running`, `player_state` or
-    /// `track`, or moves `active_source`, sets it. The connection is covered
-    /// separately by `last_reported_conn`, which is a `Copy` scalar and can
-    /// simply be compared.
+    /// so everything that writes `running`, `player_state` or `track`, or
+    /// flips `displaying`, sets it. The connection is covered separately by
+    /// `last_reported_conn`, which is a `Copy` scalar and can simply be
+    /// compared.
     ///
     /// This is only about the *log*. The menu is built when it opens, so
     /// nothing here has to keep it in step.
@@ -155,26 +157,23 @@ impl App {
             log(&format!("launch at login: could not update the path ({e})"));
         }
 
+        let mut timers = Timers::default();
+        timers.arm_in(Timer::UpdateCheck, FIRST_UPDATE_CHECK_DELAY);
+
         Ok(Self {
             settings,
-            sources: SourceStates::default(),
-            active_source: None,
-            discord: Client::new(),
+            music: MusicState::default(),
+            displaying: false,
+            connection: Connection::new(),
             watcher,
             catalog: Resolver::new(Arc::clone(&wake)),
             updater: Updater::new(Arc::clone(&wake)),
             wake,
-            started: Instant::now(),
             tray: None,
+            timers,
             debouncer: Debouncer::new(DEBOUNCE, MAX_DEBOUNCE),
             pending_activity: None,
-            last_sent: None,
-            pause_hide_at: None,
             paused_timed_out: false,
-            reconnect_at: None,
-            reconnect_attempt: 0,
-            handshake_deadline: None,
-            update_check_at: Some(Instant::now() + FIRST_UPDATE_CHECK_DELAY),
             update_available: None,
             update_check_requested: false,
             logged_unknown_aumids: HashSet::new(),
@@ -237,7 +236,7 @@ impl App {
                 .next_deadline()
                 .map(|deadline| deadline.saturating_duration_since(Instant::now()));
 
-            if self.discord.state() == ConnState::Disconnected {
+            if self.connection.is_disconnected() {
                 // A failed wait returns at once and would do so on every pass;
                 // without the sleep this degrades into a pegged core on a
                 // battery-powered machine with nothing in the log to explain it.
@@ -248,7 +247,7 @@ impl App {
             } else {
                 let mut events = Vec::new();
                 let result = self
-                    .discord
+                    .connection
                     .poll(Some(self.wake.handle()), timeout, &mut events);
                 for event in events {
                     self.handle_discord_event(event);
@@ -260,7 +259,7 @@ impl App {
         }
 
         log("clearing presence and shutting down");
-        self.discord.disconnect(true);
+        self.connection.disconnect(true);
         Ok(())
     }
 
@@ -269,10 +268,7 @@ impl App {
     pub fn apply_menu_action(&mut self, action: MenuAction) {
         match action {
             MenuAction::SetButtonType { button, link_type } => {
-                match button {
-                    ButtonSlot::One => self.settings.set_button1_type(link_type),
-                    ButtonSlot::Two => self.settings.set_button2_type(link_type),
-                }
+                self.settings.set_button_type(button, link_type);
                 self.settings_changed();
             }
             MenuAction::EditButtonLabel(button) => self.edit_button_label(button),
@@ -315,9 +311,8 @@ impl App {
                 // look fine is exactly the one a user reaches for when they
                 // are not.
                 log("reconnecting at your request");
-                self.discord.disconnect(true);
-                self.last_sent = None;
-                self.handshake_deadline = None;
+                self.connection.disconnect(true);
+                self.timers.cancel(Timer::Handshake);
                 self.cancel_reconnect();
                 self.attempt_connect();
             }
@@ -356,14 +351,8 @@ impl App {
 
     fn edit_button_label(&mut self, button: ButtonSlot) {
         let language = self.settings.language;
-        let number = match button {
-            ButtonSlot::One => 1,
-            ButtonSlot::Two => 2,
-        };
-        let current = match button {
-            ButtonSlot::One => self.settings.button1_label(None),
-            ButtonSlot::Two => self.settings.button2_label(None),
-        };
+        let number = button.number();
+        let current = self.settings.button_label(button);
         let Some(text) = dialog::prompt(
             &t(
                 language,
@@ -381,10 +370,7 @@ impl App {
         };
         // The setter truncates, and treats the type's own default as "not
         // customized" so the label keeps following the link destination.
-        match button {
-            ButtonSlot::One => self.settings.set_button1_label(&text),
-            ButtonSlot::Two => self.settings.set_button2_label(&text),
-        }
+        self.settings.set_button_label(button, &text);
         self.settings_changed();
     }
 
@@ -456,23 +442,13 @@ impl App {
         self.persist_settings();
         self.status_dirty = true;
 
-        if !self.sources.any_running() {
-            self.active_source = None;
-            self.cancel_pause_timer();
-            self.cancel_reconnect();
-            self.cancel_debounce();
-            if self.discord.state() != ConnState::Disconnected {
-                log("no players left — disconnecting");
-                self.discord.disconnect(true);
-                self.last_sent = None;
-            }
+        if !self.music.running {
+            self.go_dormant();
             return;
         }
 
-        let selection =
-            crate::core::source_selector::select_active_source(&self.sources.apple_music);
-        if selection != self.active_source {
-            self.switch_active_source(selection);
+        if self.music.is_displayable() != self.displaying {
+            self.set_displaying(self.music.is_displayable());
         } else {
             self.attempt_connect();
             // The pause timeout may have been what changed, so restart it
@@ -514,155 +490,120 @@ impl App {
             }
         }
 
-        let now = Instant::now();
-        let now_ns = self.started.elapsed().as_nanos() as u64;
-        let active = self.active_source;
         // SMTC re-reports a playing session several times a second, so "did
         // anything happen?" has to be decided from the values. Without this the
         // presence would be rebuilt and compared four times a second for a
         // track that is simply playing on.
-        let mut active_changed = false;
-        let mut active_track_changed = false;
-        // Anything at all moved, on any source — which is what the status rows
-        // and the menu are built from, not just the source on display.
-        let mut any_changed = false;
+        let mut changed = false;
+        let mut track_changed = false;
 
-        {
-            let source = MusicSourceId::AppleMusic;
-            let incoming = snapshot.apple_music.as_ref();
-            let state = &mut self.sources.apple_music;
+        match snapshot.apple_music.as_ref() {
+            Some(session) => {
+                let same_track = same_identity(self.music.track.as_ref(), session.track.as_ref());
+                let seeked = position_jumped(self.music.track.as_ref(), session.track.as_ref());
+                changed = !self.music.running
+                    || self.music.player_state != session.player_state
+                    || !same_track
+                    || seeked;
 
-            match incoming {
-                Some(session) => {
-                    let same_track = same_identity(state.track.as_ref(), session.track.as_ref());
-                    let seeked = position_jumped(state.track.as_ref(), session.track.as_ref());
-                    let changed = !state.running
-                        || state.player_state != session.player_state
-                        || !same_track
-                        || seeked;
-
-                    if !state.running {
-                        log(&format!("{}: session appeared", source.display_name()));
-                        any_changed = true;
-                    }
-                    state.running = true;
-                    state.player_state = session.player_state;
-
-                    if same_track {
-                        // The overwhelmingly common case: the same track, a
-                        // moment later. Only the position moved, and the three
-                        // strings already held are equal to the ones on offer —
-                        // so cloning the reading over them would allocate three
-                        // times, several times a second, to change nothing.
-                        if let (Some(held), Some(incoming)) =
-                            (state.track.as_mut(), session.track.as_ref())
-                        {
-                            held.adopt_playback_from(incoming);
-                        }
-                    } else {
-                        state.track = session.track.clone();
-                        state.catalog = None;
-                        state.catalog_requested_for = None;
-                        state.catalog_retry_at = None;
-                    }
-
-                    if changed {
-                        state.last_event_uptime_ns = now_ns;
-                        // A seek moves no row, but everything else here does,
-                        // and one wasted rebuild costs less than reasoning
-                        // about which is which every time a row is added.
-                        any_changed = true;
-                        if Some(source) == active {
-                            active_changed = true;
-                            active_track_changed |= !same_track;
-                        }
-                    }
+                if !self.music.running {
+                    log(&format!("{}: session appeared", apple_music::DISPLAY_NAME));
                 }
-                None => {
-                    if state.running {
-                        log(&format!("{}: session gone", source.display_name()));
-                        any_changed = true;
+                self.music.running = true;
+                self.music.player_state = session.player_state;
+
+                if same_track {
+                    // The overwhelmingly common case: the same track, a moment
+                    // later. Only the position moved, and the three strings
+                    // already held are equal to the ones on offer — so cloning
+                    // the reading over them would allocate three times, several
+                    // times a second, to change nothing.
+                    if let (Some(held), Some(incoming)) =
+                        (self.music.track.as_mut(), session.track.as_ref())
+                    {
+                        held.adopt_playback_from(incoming);
                     }
-                    *state = SourceState::default();
+                } else {
+                    self.music.track = session.track.clone();
+                    self.reset_catalog();
+                    track_changed = true;
                 }
             }
+            None => {
+                if self.music.running {
+                    log(&format!("{}: session gone", apple_music::DISPLAY_NAME));
+                    changed = true;
+                }
+                self.music = MusicState::default();
+                self.timers.cancel(Timer::CatalogRetry);
+            }
         }
-        self.status_dirty |= any_changed;
+
+        // A seek moves no row, but everything else here does, and one wasted
+        // rebuild costs less than reasoning about which is which every time a
+        // row is added.
+        self.status_dirty |= changed;
 
         // Artwork and links are not in SMTC; they have to be looked up, which
         // takes a network round trip. The request goes out here and the
         // presence is sent without them in the meantime, so a slow lookup never
         // delays the card.
-        self.request_missing_catalog(now);
+        self.request_missing_catalog(Instant::now());
 
-        if !self.sources.any_running() {
+        if !self.music.running {
             // Nothing left to report. The macOS build goes fully dormant here
             // rather than holding an idle Discord connection open.
-            self.active_source = None;
-            self.cancel_pause_timer();
-            self.cancel_reconnect();
-            self.cancel_debounce();
-            if self.discord.state() != ConnState::Disconnected {
-                log("no players left — disconnecting");
-                self.discord.disconnect(true);
-                self.last_sent = None;
-            }
+            self.go_dormant();
             return;
         }
 
         self.attempt_connect();
 
-        let selection =
-            crate::core::source_selector::select_active_source(&self.sources.apple_music);
-        if selection != self.active_source {
-            self.switch_active_source(selection);
-        } else if active_changed {
+        if self.music.is_displayable() != self.displaying {
+            self.set_displaying(self.music.is_displayable());
+        } else if changed && self.displaying {
             // Skipping a track while paused counts as interacting with the
             // player, so a timed-out presence comes back and the clock restarts.
-            if active_track_changed {
+            if track_changed {
                 self.cancel_pause_timer();
             }
             self.update_pause_timer();
             self.push_activity();
         }
-        // An event from a source that is not on display, and that does not
-        // change which source is, needs nothing sent.
+        // An event that changes nothing on display needs nothing sent.
     }
 
-    /// Changing source usually means changing Discord application id, because
-    /// "Listening to <name>" comes from the application behind the connection.
-    fn switch_active_source(&mut self, new_source: Option<MusicSourceId>) {
-        log(&format!(
-            "active source: {}",
-            new_source.map_or("none", MusicSourceId::display_name)
-        ));
-        self.active_source = new_source;
-        // The rows say which source is on display, so this moves them.
+    /// Starts or stops showing something on Discord.
+    fn set_displaying(&mut self, displaying: bool) {
+        log(if displaying {
+            "now showing on Discord"
+        } else {
+            "nothing to show — clearing"
+        });
+        self.displaying = displaying;
+        // The rows say what is on display, so this moves them.
         self.status_dirty = true;
         self.cancel_debounce();
         self.cancel_pause_timer();
         self.update_pause_timer();
+        self.push_activity();
+    }
 
-        let Some(new_source) = new_source else {
-            // Players are still running, so the connection stays up; only the
-            // presence is cleared.
-            self.push_activity();
-            return;
-        };
-
-        let wanted = new_source.discord_client_id();
-        if self
-            .discord
-            .client_id()
-            .is_some_and(|current| current != wanted)
-        {
-            self.discord.disconnect(true);
-            self.last_sent = None;
-            self.handshake_deadline = None;
-            self.cancel_reconnect();
-            self.attempt_connect();
-        } else {
-            self.push_activity();
+    /// The player is gone: stop everything and go back to fully idle.
+    ///
+    /// The only way into that state, so "stop one more thing" is a one-line
+    /// change rather than an edit repeated at every call site — which is what
+    /// it used to be, in two places that had drifted apart.
+    fn go_dormant(&mut self) {
+        self.displaying = false;
+        self.cancel_pause_timer();
+        self.cancel_reconnect();
+        self.cancel_debounce();
+        self.timers.cancel(Timer::CatalogRetry);
+        self.timers.cancel(Timer::Handshake);
+        if !self.connection.is_disconnected() {
+            log("no players left — disconnecting");
+            self.connection.disconnect(true);
         }
     }
 
@@ -674,16 +615,14 @@ impl App {
     /// `catalog_requested_for` guard is what keeps SMTC's event rate from
     /// turning into a request rate.
     fn request_missing_catalog(&mut self, now: Instant) {
-        let source = MusicSourceId::AppleMusic;
-        let state = &mut self.sources.apple_music;
-        if !state.running || state.catalog.is_some() {
+        if !self.music.running || self.music.catalog.is_some() {
             return;
         }
         // A failed lookup is serving its cooling-off period.
-        if state.catalog_retry_at.is_some_and(|at| at > now) {
+        if self.music.catalog_retry_at.is_some_and(|at| at > now) {
             return;
         }
-        let Some(track) = state.track.as_ref() else {
+        let Some(track) = self.music.track.as_ref() else {
             return;
         };
         if track.name.is_empty() {
@@ -693,7 +632,8 @@ impl App {
         // that holds for the whole of a track the catalog had no answer
         // for, so it runs on every SMTC event and must not allocate to say
         // "already asked".
-        if state
+        if self
+            .music
             .catalog_requested_for
             .as_deref()
             .is_some_and(|requested| track.matches_identity(requested))
@@ -703,7 +643,6 @@ impl App {
         let identity = track.identity();
 
         let request = CatalogRequest {
-            source,
             key: identity.clone(),
             name: track.name.clone(),
             artist: track.artist.clone(),
@@ -714,12 +653,13 @@ impl App {
         // silent, art-less card, and only this line tells them apart.
         log(&format!(
             "{}: looking up \"{}\" by \"{}\"",
-            source.display_name(),
+            apple_music::DISPLAY_NAME,
             request.name,
             request.artist
         ));
-        state.catalog_requested_for = Some(identity);
-        state.catalog_retry_at = None;
+        self.music.catalog_requested_for = Some(identity);
+        self.music.catalog_retry_at = None;
+        self.timers.cancel(Timer::CatalogRetry);
         self.catalog.request(request);
     }
 
@@ -727,8 +667,8 @@ impl App {
     /// used when the track it belongs to is still the one playing.
     fn drain_catalog(&mut self) {
         while let Some(resolved) = self.catalog.try_recv() {
-            let state = self.sources.get_mut(resolved.source);
-            let still_playing = state
+            let still_playing = self
+                .music
                 .track
                 .as_ref()
                 .is_some_and(|track| track.matches_identity(&resolved.key));
@@ -736,28 +676,29 @@ impl App {
                 continue;
             }
 
-            let name = resolved.source.display_name();
+            let name = apple_music::DISPLAY_NAME;
             let mut resend = false;
             match resolved.outcome {
                 Outcome::Found(catalog) => {
-                    state.catalog = Some(catalog);
-                    state.catalog_retry_at = None;
+                    self.music.catalog = Some(catalog);
+                    self.music.catalog_retry_at = None;
                     log(&format!("{name}: catalog resolved"));
                     // The presence has already gone out without artwork, so
                     // only a hit is worth the re-send.
-                    resend = Some(resolved.source) == self.active_source;
+                    resend = self.displaying;
                 }
                 Outcome::Missing => {
-                    state.catalog = None;
-                    state.catalog_retry_at = None;
+                    self.music.catalog = None;
+                    self.music.catalog_retry_at = None;
                     log(&format!("{name}: catalog not found"));
                 }
                 Outcome::Failed => {
                     // Not an answer. Clearing the guard lets the track be asked
                     // about again once the cooling-off period is up, instead of
                     // spending the rest of the song with no artwork.
-                    state.catalog_requested_for = None;
-                    state.catalog_retry_at = Some(Instant::now() + CATALOG_RETRY_DELAY);
+                    self.music.catalog_requested_for = None;
+                    self.music.catalog_retry_at = Some(Instant::now() + CATALOG_RETRY_DELAY);
+                    self.timers.arm_in(Timer::CatalogRetry, CATALOG_RETRY_DELAY);
                     log(&format!(
                         "{name}: catalog lookup failed — retrying in {}s",
                         CATALOG_RETRY_DELAY.as_secs()
@@ -768,6 +709,13 @@ impl App {
                 self.push_activity();
             }
         }
+    }
+
+    /// Back to "nothing known about this track", with the pending retry — if
+    /// any — dropped alongside it.
+    fn reset_catalog(&mut self) {
+        self.music.clear_catalog();
+        self.timers.cancel(Timer::CatalogRetry);
     }
 
     // MARK: - Updates
@@ -834,7 +782,7 @@ impl App {
     // MARK: - Activity
 
     fn push_activity(&mut self) {
-        if !self.sources.any_running() {
+        if !self.music.running {
             return;
         }
         self.pending_activity = Some(self.build_activity());
@@ -847,18 +795,18 @@ impl App {
     }
 
     fn build_activity(&self) -> Option<Map<String, Value>> {
-        let source = self.active_source?;
-        let state = self.sources.get(source);
-        let track = state.track.as_ref()?;
-        if !self.should_show_activity(state.player_state) {
+        if !self.displaying {
+            return None;
+        }
+        let track = self.music.track.as_ref()?;
+        if !self.should_show_activity(self.music.player_state) {
             return None;
         }
         Some(activity_builder::build(
             track,
-            state.player_state,
-            state.catalog.as_ref(),
+            self.music.player_state,
+            self.music.catalog.as_ref(),
             &self.settings,
-            source,
             SystemTime::now(),
         ))
     }
@@ -875,72 +823,50 @@ impl App {
         let Some(activity) = self.pending_activity.take() else {
             return;
         };
-        if self.discord.state() != ConnState::Connected {
-            // Nothing to send it over yet. Dropping it is safe: READY pushes a
-            // freshly built presence, which is more current than this one.
-            return;
-        }
-        if let Some(previous) = &self.last_sent {
-            let unchanged = match (previous, &activity) {
-                (None, None) => true,
-                (Some(previous), Some(activity)) => {
-                    activity_builder::is_equivalent(previous, activity)
-                }
-                _ => false,
-            };
-            if unchanged {
-                return;
-            }
-        }
-
-        let payload = activity.clone().map(Value::Object);
-        match self.discord.set_activity(payload) {
-            Ok(()) => {
-                log(&format!("-> {}", activity_builder::describe(&activity)));
-                self.last_sent = Some(activity);
-            }
-            Err(e) => log(&format!("discord: send failed ({e})")),
+        match self.connection.send(activity) {
+            // Nothing to send it over yet, or Discord is already showing this.
+            // Dropping it is safe: READY pushes a freshly built presence, which
+            // is more current than this one.
+            Sent::NotConnected | Sent::Unchanged => {}
+            Sent::Sent(description) => log(&format!("-> {description}")),
+            Sent::Failed(e) => log(&format!("discord: send failed ({e})")),
         }
     }
 
     // MARK: - Pause timeout
 
     fn update_pause_timer(&mut self) {
-        let paused = self
-            .active_source
-            .map(|source| self.sources.get(source).player_state == PlayerState::Paused)
-            .unwrap_or(false);
-        if !paused {
+        if !self.displaying || self.music.player_state != PlayerState::Paused {
             self.cancel_pause_timer();
             return;
         }
         // Already counting, or already elapsed: do not restart the clock.
-        if self.pause_hide_at.is_some() || self.paused_timed_out {
+        if self.timers.is_armed(Timer::PauseHide) || self.paused_timed_out {
             return;
         }
         // 0 hides immediately and -1 never hides; neither needs a timer.
         if self.settings.pause_hide_minutes > 0 {
             let minutes = self.settings.pause_hide_minutes as u64;
-            self.pause_hide_at = Some(Instant::now() + Duration::from_secs(minutes * 60));
+            self.timers
+                .arm_in(Timer::PauseHide, Duration::from_secs(minutes * 60));
         }
     }
 
     fn cancel_pause_timer(&mut self) {
-        self.pause_hide_at = None;
+        self.timers.cancel(Timer::PauseHide);
         self.paused_timed_out = false;
     }
 
     // MARK: - Connection
 
     fn attempt_connect(&mut self) {
-        if !self.sources.any_running() || self.discord.state() != ConnState::Disconnected {
+        if !self.music.running || !self.connection.is_disconnected() {
             return;
         }
-        let source = self.active_source.unwrap_or(MusicSourceId::AppleMusic);
-        match self.discord.connect(source.discord_client_id()) {
+        match self.connection.connect() {
             Ok(()) => {
-                log(&format!("connecting as {}…", source.display_name()));
-                self.handshake_deadline = Some(Instant::now() + HANDSHAKE_TIMEOUT);
+                log(&format!("connecting as {}…", apple_music::DISPLAY_NAME));
+                self.timers.arm_in(Timer::Handshake, HANDSHAKE_TIMEOUT);
             }
             Err(e) => {
                 log(&format!("discord: {e}"));
@@ -950,35 +876,31 @@ impl App {
     }
 
     fn schedule_reconnect(&mut self) {
-        self.handshake_deadline = None;
-        if !self.sources.any_running() {
+        self.timers.cancel(Timer::Handshake);
+        if !self.music.running {
             return;
         }
-        let delay = MAX_RECONNECT_DELAY_SECS.min(1u64 << self.reconnect_attempt.min(6));
-        self.reconnect_attempt = (self.reconnect_attempt + 1).min(6);
-        self.reconnect_at = Some(Instant::now() + Duration::from_secs(delay));
-        log(&format!("discord: retrying in {delay}s"));
+        let delay = self.connection.next_backoff();
+        self.timers.arm_in(Timer::Reconnect, delay);
+        log(&format!("discord: retrying in {}s", delay.as_secs()));
     }
 
     fn cancel_reconnect(&mut self) {
-        self.reconnect_at = None;
-        self.reconnect_attempt = 0;
+        self.timers.cancel(Timer::Reconnect);
+        self.connection.reset_backoff();
     }
 
     fn handle_discord_event(&mut self, event: DiscordEvent) {
         match event {
             DiscordEvent::Ready => {
                 log("discord: connected");
-                self.reconnect_attempt = 0;
-                self.handshake_deadline = None;
-                // A fresh connection shows nothing, so the previous send must
-                // not suppress the first push.
-                self.last_sent = None;
+                self.timers.cancel(Timer::Handshake);
+                self.connection.note_ready();
                 self.push_activity();
             }
             DiscordEvent::Closed => {
                 log("discord: disconnected");
-                self.last_sent = None;
+                self.connection.note_closed();
                 self.schedule_reconnect();
             }
             // Discord's own account of what it refused — an invalid client id,
@@ -997,69 +919,51 @@ impl App {
             self.flush_activity();
         }
 
-        if self.pause_hide_at.is_some_and(|at| at <= now) {
-            self.pause_hide_at = None;
-            let still_paused = self
-                .active_source
-                .map(|source| self.sources.get(source).player_state == PlayerState::Paused)
-                .unwrap_or(false);
-            if still_paused {
-                log("paused long enough — hiding presence");
-                self.paused_timed_out = true;
-                self.push_activity();
-            }
+        if self.timers.take_if_due(Timer::PauseHide, now)
+            && self.displaying
+            && self.music.player_state == PlayerState::Paused
+        {
+            log("paused long enough — hiding presence");
+            self.paused_timed_out = true;
+            self.push_activity();
         }
 
-        if self.handshake_deadline.is_some_and(|at| at <= now) {
-            self.handshake_deadline = None;
-            if self.discord.state() == ConnState::Connecting {
-                log("discord: no READY within the handshake window — giving up on this pipe");
-                self.discord.disconnect(false);
-                self.last_sent = None;
-                self.schedule_reconnect();
-            }
+        if self.timers.take_if_due(Timer::Handshake, now)
+            && self.connection.state() == ConnState::Connecting
+        {
+            log("discord: no READY within the handshake window — giving up on this pipe");
+            self.connection.disconnect(false);
+            self.schedule_reconnect();
         }
 
-        if self.reconnect_at.is_some_and(|at| at <= now) {
-            self.reconnect_at = None;
+        if self.timers.take_if_due(Timer::Reconnect, now) {
             self.attempt_connect();
         }
 
-        if self.update_check_at.is_some_and(|at| at <= now) {
+        if self.timers.take_if_due(Timer::UpdateCheck, now) {
             // Re-armed before the answer arrives, so a check that fails still
             // leaves the next one scheduled rather than ending the series.
-            self.update_check_at = Some(now + UPDATE_CHECK_INTERVAL);
+            self.timers
+                .arm_in(Timer::UpdateCheck, UPDATE_CHECK_INTERVAL);
             log("checking for updates");
             self.updater.check();
         }
 
-        // A due retry is consumed here whether or not it leads to a request, so
-        // a deadline that is already past can never keep the loop spinning.
-        let catalog_retry_due = {
-            let state = &mut self.sources.apple_music;
-            let due = state.catalog_retry_at.is_some_and(|at| at <= now);
-            if due {
-                state.catalog_retry_at = None;
-            }
-            due
-        };
-        if catalog_retry_due {
+        // Consumed whether or not it leads to a request, so a deadline that is
+        // already past can never keep the loop spinning.
+        if self.timers.take_if_due(Timer::CatalogRetry, now) {
+            self.music.catalog_retry_at = None;
             self.request_missing_catalog(now);
         }
     }
 
     fn next_deadline(&self) -> Option<Instant> {
-        [
-            self.debouncer.deadline(),
-            self.pause_hide_at,
-            self.reconnect_at,
-            self.handshake_deadline,
-            self.update_check_at,
-            self.sources.apple_music.catalog_retry_at,
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        // `Timers::next` covers every variant by construction; the debouncer
+        // keeps its own, which it derives from two intervals rather than one.
+        [self.timers.next(), self.debouncer.deadline()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// The status rows, logged whenever they change.
@@ -1072,7 +976,7 @@ impl App {
         // wakes several times a second, and the rows are a `Vec<String>` — so
         // the question "could they have moved?" has to be answerable without
         // assembling them to find out. See `status_dirty` for the invariant.
-        let conn = self.discord.state();
+        let conn = self.connection.state();
         if !self.status_dirty && conn == self.last_reported_conn {
             return;
         }
@@ -1094,7 +998,7 @@ impl App {
 
     fn status_input(&self, conn: ConnState) -> status_lines::Input<'_> {
         status_lines::Input {
-            apple_music: &self.sources.apple_music,
+            music: &self.music,
             discord_state: conn,
             language: self.settings.language,
         }
@@ -1111,7 +1015,7 @@ impl App {
     /// Returns `false` if the message pump saw `WM_QUIT`.
     fn open_menu(&mut self) -> bool {
         let rows = menu_model::build_menu(&menu_model::MenuInput {
-            status: self.status_input(self.discord.state()),
+            status: self.status_input(self.connection.state()),
             settings: &self.settings,
             launch_at_login: launch_at_login::is_enabled(),
             update_available: self.update_available.as_ref().map(|r| r.tag.as_str()),

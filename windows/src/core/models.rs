@@ -11,30 +11,6 @@ pub enum PlayerState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MusicSourceId {
-    AppleMusic,
-}
-
-impl MusicSourceId {
-    pub const COUNT: usize = 1;
-    pub const ALL: [MusicSourceId; Self::COUNT] = [MusicSourceId::AppleMusic];
-
-    pub fn display_name(self) -> &'static str {
-        match self {
-            MusicSourceId::AppleMusic => "Apple Music",
-        }
-    }
-
-    /// Discord shows "Listening to <Application name>", and the name belongs to
-    /// the Application the client id identifies — hence one id per source.
-    pub fn discord_client_id(self) -> &'static str {
-        match self {
-            MusicSourceId::AppleMusic => "1525381518258606130",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnState {
     Disconnected,
     Connecting,
@@ -113,9 +89,9 @@ impl TrackInfo {
     /// one already held is three heap allocations to arrive back where we were.
     ///
     /// Only sound when the two are the same track: `identity` covers the name,
-    /// the artist, the album and the track id, and this covers everything it
-    /// does not. **A field added to this type belongs in one of those two
-    /// places**, or it will silently stop being updated.
+    /// the artist and the album, and this covers everything it does not.
+    /// **A field added to this type belongs in one of those two places**, or it
+    /// will silently stop being updated.
     pub fn adopt_playback_from(&mut self, other: &TrackInfo) {
         self.duration_sec = other.duration_sec;
         self.position_sec = other.position_sec;
@@ -131,8 +107,10 @@ pub struct CatalogInfo {
     pub artwork_url: Option<String>,
 }
 
+/// What Apple Music is doing right now. There is one player, so this is the
+/// whole of the app's music-side state.
 #[derive(Debug, Clone)]
-pub struct SourceState {
+pub struct MusicState {
     pub running: bool,
     pub player_state: PlayerState,
     pub track: Option<TrackInfo>,
@@ -145,12 +123,9 @@ pub struct SourceState {
     /// be tried again. A failure is not an answer, so unlike a catalogue miss
     /// it must not silently cost the track its artwork for good.
     pub catalog_retry_at: Option<Instant>,
-    /// Monotonic timestamp of the last event, used to break ties when both
-    /// sources are playing.
-    pub last_event_uptime_ns: u64,
 }
 
-impl Default for SourceState {
+impl Default for MusicState {
     fn default() -> Self {
         Self {
             running: false,
@@ -159,31 +134,25 @@ impl Default for SourceState {
             catalog: None,
             catalog_requested_for: None,
             catalog_retry_at: None,
-            last_event_uptime_ns: 0,
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct SourceStates {
-    pub apple_music: SourceState,
-}
-
-impl SourceStates {
-    pub fn get(&self, id: MusicSourceId) -> &SourceState {
-        match id {
-            MusicSourceId::AppleMusic => &self.apple_music,
-        }
+impl MusicState {
+    /// Whether there is something to put on Discord: running, with a track, and
+    /// not stopped. A paused player still counts — whether the presence is
+    /// actually cleared is `pause_hide_minutes`'s decision, not this one.
+    pub fn is_displayable(&self) -> bool {
+        self.running && self.track.is_some() && self.player_state != PlayerState::Stopped
     }
 
-    pub fn get_mut(&mut self, id: MusicSourceId) -> &mut SourceState {
-        match id {
-            MusicSourceId::AppleMusic => &mut self.apple_music,
-        }
-    }
-
-    pub fn any_running(&self) -> bool {
-        self.apple_music.running
+    /// Wipes the catalog back to "nothing known", for a track change or a
+    /// player that went away. The request guard goes with it: leaving it set
+    /// would tell the next track it had already been asked about.
+    pub fn clear_catalog(&mut self) {
+        self.catalog = None;
+        self.catalog_requested_for = None;
+        self.catalog_retry_at = None;
     }
 }
 
@@ -213,11 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn all_stays_in_step_with_count() {
-        assert_eq!(MusicSourceId::ALL.len(), MusicSourceId::COUNT);
-    }
-
-    #[test]
     fn adopting_playback_leaves_nothing_a_clone_would_have_carried() {
         // The contract that makes skipping the clone safe: for two readings of
         // the same track, adopting must be indistinguishable from cloning. A
@@ -235,5 +199,53 @@ mod tests {
         assert_eq!(held.identity(), incoming.identity(), "the same track");
         held.adopt_playback_from(&incoming);
         assert_eq!(held, incoming);
+    }
+
+    fn playing_with_track() -> MusicState {
+        MusicState {
+            running: true,
+            player_state: PlayerState::Playing,
+            track: Some(TrackInfo::new("Song", "Artist", "Album")),
+            ..MusicState::default()
+        }
+    }
+
+    #[test]
+    fn nothing_is_displayable_until_a_running_player_has_a_track() {
+        assert!(!MusicState::default().is_displayable());
+        assert!(playing_with_track().is_displayable());
+
+        let mut no_track = playing_with_track();
+        no_track.track = None;
+        assert!(!no_track.is_displayable(), "no track yet");
+
+        let mut gone = playing_with_track();
+        gone.running = false;
+        assert!(!gone.is_displayable(), "player gone");
+
+        let mut stopped = playing_with_track();
+        stopped.player_state = PlayerState::Stopped;
+        assert!(!stopped.is_displayable(), "stopped");
+
+        // Paused is still a candidate; hiding it is a separate decision.
+        let mut paused = playing_with_track();
+        paused.player_state = PlayerState::Paused;
+        assert!(paused.is_displayable());
+    }
+
+    #[test]
+    fn clearing_the_catalog_also_clears_the_request_guard() {
+        // Leaving the guard behind would tell the next track it had already
+        // been asked about, costing it its artwork for the whole song.
+        let mut state = playing_with_track();
+        state.catalog = Some(CatalogInfo::default());
+        state.catalog_requested_for = Some("Song\u{1F}Artist\u{1F}Album".into());
+        state.catalog_retry_at = Some(Instant::now());
+
+        state.clear_catalog();
+
+        assert!(state.catalog.is_none());
+        assert!(state.catalog_requested_for.is_none());
+        assert!(state.catalog_retry_at.is_none());
     }
 }

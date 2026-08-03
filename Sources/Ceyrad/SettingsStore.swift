@@ -1,5 +1,27 @@
 import Foundation
 
+/// 設定可能なDiscordボタン2つのうちどちらか。
+///
+/// ボタン1と2の設定は完全に対称なので、番号を値として持ち回ることで
+/// 「1用」「2用」の同じコードを2本書かずに済ませる。
+enum ButtonSlot: Int, CaseIterable {
+    case one = 1
+    case two = 2
+
+    var number: Int { rawValue }
+
+    /// 未設定時のリンク先。曲ページとリポジトリという既定の組み合わせ。
+    var defaultType: LinkType {
+        switch self {
+        case .one: return .song
+        case .two: return .repository
+        }
+    }
+
+    fileprivate var typeKey: String { "button\(rawValue)Type" }
+    fileprivate var labelKey: String { "button\(rawValue)Label" }
+}
+
 enum LinkType: String, CaseIterable {
     case song
     case artist
@@ -8,24 +30,25 @@ enum LinkType: String, CaseIterable {
     case repository
     case disabled
 
-    var displayName: String {
+    /// メニューに表示するリンク先の選択肢。
+    static let selectableCases: [LinkType] = [
+        .song, .artist, .album, .custom, .repository, .disabled,
+    ]
+
+    func displayName(_ language: AppLanguage) -> String {
         switch self {
-        case .song: return t("Song Page", "曲ページ")
-        case .artist: return t("Artist Page", "アーティストページ")
-        case .album: return t("Album Page", "アルバムページ")
-        case .custom: return t("Custom URL", "カスタムURL")
-        case .repository: return t("Repository", "リポジトリ")
-        case .disabled: return t("Off", "オフ")
+        case .song: return t(language, "Song Page", "曲ページ")
+        case .artist: return t(language, "Artist Page", "アーティストページ")
+        case .album: return t(language, "Album Page", "アルバムページ")
+        case .custom: return t(language, "Custom URL", "カスタムURL")
+        case .repository: return t(language, "Repository", "リポジトリ")
+        case .disabled: return t(language, "Off", "オフ")
         }
     }
 
-    /// メニューに表示するリンク先の選択肢。
-    static var selectableCases: [LinkType] {
-        [.song, .artist, .album, .custom, .repository, .disabled]
-    }
-
-    /// リンク先に応じたボタンラベルの既定値。ユーザーが手動でラベルを変更するまではこれに追従する。
-    func defaultLabel(for source: MusicSourceID?) -> String {
+    /// リンク先に応じたボタンラベルの既定値。
+    /// ユーザーが手動でラベルを変更するまではこれに追従する。Discord側に出る文言なので英語固定。
+    var defaultLabel: String {
         switch self {
         case .song: return "Play on Apple Music"
         case .artist: return "View Artist"
@@ -34,11 +57,6 @@ enum LinkType: String, CaseIterable {
         case .repository: return "About This App"
         case .disabled: return ""
         }
-    }
-
-    /// このリンク先の既定ラベルとして扱う文字列すべて。「未カスタマイズか」の判定に使う。
-    var defaultLabels: [String] {
-        [defaultLabel(for: nil)]
     }
 }
 
@@ -49,12 +67,12 @@ enum BadgeLabelType: Int, CaseIterable {
     case artist = 1
     case track = 2
 
-    var displayName: String {
+    func displayName(_ language: AppLanguage) -> String {
         switch self {
         // Discord側の名前は接続中のクライアント（Apple Music）に依存する
-        case .appName: return t("App Name", "アプリ名")
-        case .artist: return t("Artist Name", "アーティスト名")
-        case .track: return t("Track Name", "曲名")
+        case .appName: return t(language, "App Name", "アプリ名")
+        case .artist: return t(language, "Artist Name", "アーティスト名")
+        case .track: return t(language, "Track Name", "曲名")
         }
     }
 }
@@ -65,6 +83,8 @@ final class SettingsStore {
     /// このアプリ専用のDiscord Application ID（Application名: "Apple Music"）。
     /// ユーザーが変更する必要はないため固定値とする。
     static let discordClientId = "1525381518258606130"
+    /// Discord RPCの制限。ラベルはここで切ってから送る。
+    static let maxLabelCharacters = 32
 
     private let defaults: UserDefaults
 
@@ -73,53 +93,40 @@ final class SettingsStore {
         self.defaults = defaults
     }
 
-    var button1Type: LinkType {
-        get { LinkType(rawValue: defaults.string(forKey: "button1Type") ?? "") ?? .song }
-        set { setType(newValue, typeKey: "button1Type", labelKey: "button1Label", old: button1Type) }
+    // MARK: - ボタン
+
+    func buttonType(_ slot: ButtonSlot) -> LinkType {
+        LinkType(rawValue: defaults.string(forKey: slot.typeKey) ?? "") ?? slot.defaultType
     }
 
-    /// メニュー表示用（既定はApple Music表記）。Discordへ送る実ラベルは`button1Label(for:)`。
-    var button1Label: String {
-        get { button1Label(for: nil) }
-        set { setLabel(newValue, labelKey: "button1Label", type: button1Type) }
-    }
-
-    func button1Label(for source: MusicSourceID?) -> String {
-        defaults.string(forKey: "button1Label") ?? button1Type.defaultLabel(for: source)
-    }
-
-    var button2Type: LinkType {
-        get { LinkType(rawValue: defaults.string(forKey: "button2Type") ?? "") ?? .repository }
-        set { setType(newValue, typeKey: "button2Type", labelKey: "button2Label", old: button2Type) }
-    }
-
-    /// メニュー表示用（既定はApple Music表記）。Discordへ送る実ラベルは`button2Label(for:)`。
-    var button2Label: String {
-        get { button2Label(for: nil) }
-        set { setLabel(newValue, labelKey: "button2Label", type: button2Type) }
-    }
-
-    func button2Label(for source: MusicSourceID?) -> String {
-        defaults.string(forKey: "button2Label") ?? button2Type.defaultLabel(for: source)
-    }
-
-    /// ラベルが未カスタマイズ（＝旧リンク先の既定値のまま）なら、リンク先変更時にラベルも追従させる
-    private func setType(_ newValue: LinkType, typeKey: String, labelKey: String, old: LinkType) {
-        if let stored = defaults.string(forKey: labelKey), old.defaultLabels.contains(stored) {
-            defaults.removeObject(forKey: labelKey)
+    /// ラベルが未カスタマイズ（＝旧リンク先の既定値のまま）なら、
+    /// リンク先の変更に合わせてラベルも追従させる。ユーザーが選んだラベルは残す。
+    func setButtonType(_ slot: ButtonSlot, _ newValue: LinkType) {
+        if let stored = defaults.string(forKey: slot.labelKey),
+            stored == buttonType(slot).defaultLabel
+        {
+            defaults.removeObject(forKey: slot.labelKey)
         }
-        defaults.set(newValue.rawValue, forKey: typeKey)
+        defaults.set(newValue.rawValue, forKey: slot.typeKey)
     }
 
-    /// 既定値と同じ・空文字ならカスタムラベル扱いにせず削除し、以後もリンク先に追従させる
-    private func setLabel(_ newValue: String, labelKey: String, type: LinkType) {
-        let value = String(newValue.prefix(32))
-        if value.isEmpty || type.defaultLabels.contains(value) {
-            defaults.removeObject(forKey: labelKey)
+    func buttonLabel(_ slot: ButtonSlot) -> String {
+        defaults.string(forKey: slot.labelKey) ?? buttonType(slot).defaultLabel
+    }
+
+    /// 空文字・現在のリンク先の既定値と同じならカスタム扱いにせず削除し、以後もリンク先に追従させる。
+    func setButtonLabel(_ slot: ButtonSlot, _ newValue: String) {
+        // ActivityBuilderが送信時に切るのと同じ切り方。絵文字で終わるラベルが
+        // ダイアログから半分だけ返ってこないようにする。
+        let value = Text.truncate(newValue, max: Self.maxLabelCharacters)
+        if value.isEmpty || value == buttonType(slot).defaultLabel {
+            defaults.removeObject(forKey: slot.labelKey)
         } else {
-            defaults.set(value, forKey: labelKey)
+            defaults.set(value, forKey: slot.labelKey)
         }
     }
+
+    // MARK: - URL
 
     var customURL: String {
         get { defaults.string(forKey: "customURL") ?? "" }
@@ -130,6 +137,8 @@ final class SettingsStore {
         get { defaults.string(forKey: "repositoryURL") ?? Self.defaultRepositoryURL }
         set { defaults.set(newValue, forKey: "repositoryURL") }
     }
+
+    // MARK: - 表示
 
     /// バッジ表示（status_display_type）。integer(forKey:)は未設定時に0を返すため、
     /// 既定値をartistにできるようobjectで取り出す。

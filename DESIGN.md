@@ -111,6 +111,9 @@ v1からの主な変更点:
 - **レート制限**: 最低3秒間隔（非公式に約20req/分の制限があるため）
 - **キャッシュ**: トラック単位でLRU 300件。**見つからなかった結果もキャッシュ**する
   （ローカル曲の再生/一時停止のたびに再検索しない）。ネットワークエラーはキャッシュしない
+- **結果は3値**（`CatalogOutcome`）: `found` / `missing`（カタログに無い＝確定した答え） /
+  `failed`（訊けなかった＝答えではない）。`failed`だけは15秒後に訊き直す。
+  2つを`nil`ひとつに潰すと、一時的な回線断がその曲のアートワークを永久に失わせる
 - 国コードはシステムロケールから取得（`Locale.current.region`、fallback `US`）
 
 ### 4.5 ActivityBuilder
@@ -195,8 +198,66 @@ v1からの主な変更点:
 
 ---
 
-## 8. マルチソース対応の廃止（v3〜v4: Spotify → v5で削除）
+## 8. マルチソース対応の廃止（v3〜v4: Spotify → v5で削除 → v6で足場も撤去）
 
 v3でApple Musicハードコード（v2）を2ソース化し、`MusicSourceID`（`.appleMusic` / `.spotify`）とディスクリプタで宣言的差分を、`AppDelegate`のswitchで振る舞いの差分（位置補完・カタログ解決）を吸収する設計にした。v4でSpotifyの既定を無効化（Discord本体が公式のSpotify連携を持つため副次機能扱い）。
 
-v5でSpotify対応そのものを削除し、Apple Music単独のv2相当の設計に戻した。`MusicSourceID`は依然として1ケースのenumとして残しており（`MusicSourceDescriptor`・`SourceStates`・`SourceSelector`の形は維持）、将来的に別ソースを足す余地はあるが、現時点で複数ソースの選択・優先度判定ロジックは全て取り除いてある（`SourceSelector.selectActiveSource`は単一ソースの候補判定のみ）。ソースの有効/無効を切り替える「Music Sources」メニューも、選ぶ対象がApple Music1つしかなくなったため削除した。
+v5でSpotify対応そのものを削除。ただし`MusicSourceID`・`MusicSourceDescriptor`・`SourceStates`・`SourceSelector`は1ケースのenumを軸にした形のまま残していた。
+
+v6でその足場も撤去した。1ソースしかない以上、これらは「型で嘘をつく間接層」になっていた——`SourceStates`のsubscriptは引数のidを無視して常に同じ値を返し、`SourceSelector.selectActiveSource`の`current:`引数はどこからも読まれず、`lastEventUptimeNs`（両ソース再生中の優先判定用）は書かれるだけで読む場所がなく、client ID切替の再ハンドシェイク経路は到達不能だった。
+
+現在の形（macOS / Windows 共通）:
+
+| 旧 | 新 |
+|---|---|
+| `MusicSourceID` + `MusicSourceDescriptor` | `AppleMusic` / `core::apple_music`（定数と通知パースのみ） |
+| `SourceStates` + `SourceState` | `MusicState` 1つ |
+| `SourceSelector.selectActiveSource` | `MusicState.isDisplayable` |
+| `activeSource: MusicSourceID?` | `displaying: Bool` |
+| client ID切替の再ハンドシェイク | 削除（client IDは固定） |
+
+再び複数ソースに戻すなら、`MusicState`を複数持って`isDisplayable`の優先判定を足すところからになる。1ソース分の型を薄く保つほうが、使われない一般化を抱えるより戻しやすい。
+
+---
+
+## 9. macOS版とWindows版の一致（v6）
+
+Discordへ送るActivityの組み立ては、Swift（`ActivityBuilder`）とRust（`core::activity_builder`）に1本ずつ実装がある。片方だけ直しても両方のテストが緑のままなので、乖離がリリースまで届く経路になっていた。
+
+`spec/activity_vectors.json` に入力と期待値を1つだけ置き、`Tests/CeyradTests/SharedVectorTests.swift` と `windows/tests/shared_vector_tests.rs` の両方がそれを読む。実装は2本のままでも、仕様の乖離だけはCIで落ちる。
+
+これで実際に見つかった不一致が1件ある。文字列の切り詰め単位が、Swiftは書記素クラスタ（`String.prefix`）、Rustはスカラー（`core::text::truncate`）で、家族絵文字だと同じ「32文字」が7倍ずれていた。Discordの上限はスカラー寄りなので、Swift側に`Text.truncate`を追加してRustの実装を移植し、両者を揃えてある。
+
+---
+
+## 10. 現在の構成（v6）
+
+両OSで対になる型を揃えてある。片方に手を入れたらもう片方も見る。
+
+| 役割 | macOS (Swift) | Windows (Rust) |
+|---|---|---|
+| プレイヤー固有の定数 | `AppleMusic` | `core::apple_music` |
+| 音楽側の全状態 | `MusicState` | `core::models::MusicState` |
+| Activity組み立て | `ActivityBuilder` | `core::activity_builder` |
+| 文字列の切り詰め | `Text` | `core::text` |
+| メニューの中身（純粋） | `MenuModel` | `core::menu_model` |
+| メニューの描画 | `MenuBarController` | `tray::render` |
+| ステータス行 | `StatusLinesBuilder` | `core::status_lines` |
+| 設定 | `SettingsStore` | `core::settings_model` + `app::settings_store` |
+| URL入力ループ | `URLPrompt` | `core::url_prompt` |
+| 送信済み内容の記憶 | `AppDelegate.LastSent` | `core::presence::Presence` |
+| 再接続バックオフ | `ReconnectBackoff` | `core::backoff::Backoff` |
+| 一時停止タイマー | `PauseHideTimer` | `core::timers`（`Timer::PauseHide`） |
+
+**メニューはデータとして組み立てる。** `MenuModel` / `core::menu_model` はOS APIを一切呼ばず、
+「いま何が出るか」を開かずにユニットテストで答えられる。AppKit・Win32への変換は薄い描画層が受け持つ。
+
+**表示言語は引数で渡す。** `t(language, en, ja)` の形にしてあり、グローバルのシングルトンを読まない。
+おかげでメニュー全体を両言語でテストに固定できる。Discordを名指しする文言（接続状態・"Reconnect to
+Discord"・ボタンラベル）は翻訳対象外で、常に英語。
+
+**同じ内容は再送しない。** Discordが同じに描画するActivityの再送はレート制限（20秒に5回）を
+無駄に食うだけなので、直近の送信内容と比較して抑止する（`ActivityBuilder.isEquivalent` /
+`activity_builder::is_equivalent`。タイムスタンプは2秒のドリフトを許容）。
+接続が切れた/繋がった瞬間には**必ず忘れる**——新しい接続には何も表示されていないので、
+覚えたままだと1発目が「前と同じ」と誤判定されて何も出なくなる。

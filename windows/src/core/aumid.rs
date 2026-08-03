@@ -1,4 +1,4 @@
-//! Mapping SMTC's `SourceAppUserModelId` onto a music source.
+//! Deciding whether an SMTC `SourceAppUserModelId` belongs to Apple Music.
 //!
 //! Unlike macOS, where a bundle id is a stable, documented constant, the AUMID
 //! a Windows player reports depends on how it was installed: the Store build of
@@ -9,8 +9,6 @@
 //!
 //! Anything unrecognised is reported to the caller so it can be logged: that is
 //! how a user on an install we have not seen finds out what to add.
-
-use super::models::MusicSourceId;
 
 /// Package-family prefixes, compared case-insensitively.
 const APPLE_MUSIC_PACKAGE_PREFIXES: [&str; 2] = ["appleinc.applemusicwin", "appleinc.itunes"];
@@ -38,24 +36,20 @@ impl AumidOverrides {
 /// session list moves — browsers mint one per profile and per tab — and an
 /// allocation per candidate to answer "no" is the wrong shape for a question
 /// whose answer is almost always no.
-pub fn source_for_aumid(aumid: &str, overrides: &AumidOverrides) -> Option<MusicSourceId> {
+pub fn is_apple_music(aumid: &str, overrides: &AumidOverrides) -> bool {
     let id = aumid.trim();
     if id.is_empty() {
-        return None;
+        return false;
     }
 
     // Overrides win, so a user can redirect an id we would otherwise misread.
-    if matches_any(id, &overrides.apple_music) {
-        return Some(MusicSourceId::AppleMusic);
-    }
-
-    let is_built_in = APPLE_MUSIC_EXECUTABLES
-        .iter()
-        .any(|executable| id.eq_ignore_ascii_case(executable))
+    matches_any(id, &overrides.apple_music)
+        || APPLE_MUSIC_EXECUTABLES
+            .iter()
+            .any(|executable| id.eq_ignore_ascii_case(executable))
         || APPLE_MUSIC_PACKAGE_PREFIXES
             .iter()
-            .any(|prefix| starts_with_ignore_ascii_case(id, prefix));
-    is_built_in.then_some(MusicSourceId::AppleMusic)
+            .any(|prefix| starts_with_ignore_ascii_case(id, prefix))
 }
 
 /// An override matches either exactly or as a prefix, so a user can paste
