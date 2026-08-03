@@ -129,7 +129,12 @@ final class DiscordRPCClient {
         let n = readScratch.withUnsafeMutableBytes { raw in
             read(fd, raw.baseAddress, raw.count)
         }
+        if n < 0, errno == EINTR || errno == EAGAIN {
+            // 中断・空振り。ソースが次の読み取り可能でまた呼ぶので、ここでは何もしない。
+            return
+        }
         guard n > 0 else {
+            // 0 = 相手が閉じた、負 = 本当のエラー
             teardown()
             return
         }
@@ -212,8 +217,13 @@ final class DiscordRPCClient {
         frame.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             while offset < frame.count {
                 let n = write(fd, raw.baseAddress!.advanced(by: offset), frame.count - offset)
-                guard n > 0 else { break }
-                offset += n
+                if n > 0 {
+                    offset += n
+                    continue
+                }
+                // シグナルで中断されただけなら接続は生きている。ここで切ると、
+                // 何かの拍子にシグナルが飛んだだけでステータスが消えることになる。
+                guard n < 0, errno == EINTR else { break }
             }
         }
         if offset < frame.count {

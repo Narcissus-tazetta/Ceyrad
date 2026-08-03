@@ -1,6 +1,6 @@
 import AppKit
 
-/// 音楽プレイヤー / Discord の起動・終了を監視する唯一のトリガー。
+/// Apple Music / Discord の起動・終了を監視する唯一のトリガー。
 /// これ以外のタイミングで他コンポーネントを動かさないことで、未使用時のリソース消費をゼロに保つ。
 final class AppLifecycleWatcher {
     static let discordBundleIds: Set<String> = [
@@ -9,8 +9,8 @@ final class AppLifecycleWatcher {
         "com.hnc.DiscordCanary",
     ]
 
-    var onPlayerLaunch: ((MusicSourceID) -> Void)?
-    var onPlayerTerminate: ((MusicSourceID) -> Void)?
+    var onPlayerLaunch: (() -> Void)?
+    var onPlayerTerminate: (() -> Void)?
     var onDiscordLaunch: (() -> Void)?
 
     private var observers: [NSObjectProtocol] = []
@@ -23,8 +23,8 @@ final class AppLifecycleWatcher {
                 object: nil, queue: .main
             ) { [weak self] note in
                 guard let bundleId = Self.bundleId(from: note) else { return }
-                if let source = Self.source(forBundleId: bundleId) {
-                    self?.onPlayerLaunch?(source)
+                if bundleId == AppleMusic.bundleId {
+                    self?.onPlayerLaunch?()
                 } else if Self.discordBundleIds.contains(bundleId) {
                     self?.onDiscordLaunch?()
                 }
@@ -35,28 +35,19 @@ final class AppLifecycleWatcher {
                 forName: NSWorkspace.didTerminateApplicationNotification,
                 object: nil, queue: .main
             ) { [weak self] note in
-                guard let bundleId = Self.bundleId(from: note),
-                    let source = Self.source(forBundleId: bundleId)
-                else { return }
-                self?.onPlayerTerminate?(source)
+                guard Self.bundleId(from: note) == AppleMusic.bundleId else { return }
+                self?.onPlayerTerminate?()
             }
         )
 
         // 本アプリより先にプレイヤーが起動しているケース
-        for source in MusicSourceID.allCases
-        where Self.isRunning(bundleId: MusicSourceDescriptor.descriptor(for: source).bundleId) {
-            onPlayerLaunch?(source)
+        if Self.isRunning(bundleId: AppleMusic.bundleId) {
+            onPlayerLaunch?()
         }
     }
 
     static func isRunning(bundleId: String) -> Bool {
         NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleId }
-    }
-
-    private static func source(forBundleId bundleId: String) -> MusicSourceID? {
-        MusicSourceID.allCases.first {
-            MusicSourceDescriptor.descriptor(for: $0).bundleId == bundleId
-        }
     }
 
     private static func bundleId(from note: Notification) -> String? {

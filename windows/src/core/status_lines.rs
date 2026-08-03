@@ -1,20 +1,21 @@
-use crate::t;
+use crate::t_fmt;
 
+use super::apple_music;
 use super::i18n::AppLanguage;
-use super::models::{ConnState, MusicSourceId, PlayerState, SourceState, TrackInfo};
+use super::models::{ConnState, MusicState, PlayerState, TrackInfo};
 
 /// Values shown as the disabled info rows at the top of the tray menu.
 ///
 /// The state is borrowed, not owned: this is rebuilt on every pass of the
 /// event loop to notice a change, and SMTC wakes that loop several times a
-/// second — cloning a `SourceState` each time would be the app's largest
+/// second — cloning a `MusicState` each time would be the app's largest
 /// steady-state allocation for no gain.
 ///
 /// Unlike macOS there are no automation-permission warnings: SMTC needs no
 /// user grant, so those rows have no Windows counterpart.
 #[derive(Debug, Clone)]
 pub struct Input<'a> {
-    pub apple_music: &'a SourceState,
+    pub music: &'a MusicState,
     pub discord_state: ConnState,
     pub language: AppLanguage,
 }
@@ -24,13 +25,13 @@ pub fn lines(input: &Input) -> Vec<String> {
 }
 
 fn source_line(input: &Input) -> String {
-    let name = MusicSourceId::AppleMusic.display_name();
-    let s = input.apple_music;
+    let name = apple_music::DISPLAY_NAME;
+    let s = input.music;
     if !s.running {
-        return t!(input.language, "{name}: Not Running", "{name}: 未起動");
+        return t_fmt!(input.language, "{name}: Not Running", "{name}: 未起動");
     }
     match s.player_state {
-        PlayerState::Stopped => t!(input.language, "{name}: Stopped", "{name}: 停止中"),
+        PlayerState::Stopped => t_fmt!(input.language, "{name}: Stopped", "{name}: 停止中"),
         PlayerState::Playing => format!("♪ {name}: {}", track_line(s.track.as_ref())),
         PlayerState::Paused => format!("⏸ {name}: {}", track_line(s.track.as_ref())),
     }
@@ -38,7 +39,7 @@ fn source_line(input: &Input) -> String {
 
 /// Always English — Discord-facing wording is not localized.
 fn discord_line(input: &Input) -> String {
-    if !input.apple_music.running {
+    if !input.music.running {
         return "Discord: Idle (connects when a player starts)".to_string();
     }
     match input.discord_state {

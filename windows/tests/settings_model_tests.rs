@@ -1,18 +1,20 @@
 //! Port of Tests/CeyradTests/SettingsStoreTests.swift
 
 use ceyrad::core::i18n::AppLanguage;
-use ceyrad::core::models::MusicSourceId;
 use ceyrad::core::settings_model::{
-    BadgeLabelType, LinkType, Settings, DEFAULT_REPOSITORY_URL, PAUSE_HIDE_CHOICES,
+    BadgeLabelType, ButtonSlot, LinkType, Settings, DEFAULT_REPOSITORY_URL, PAUSE_HIDE_CHOICES,
 };
 
 #[test]
 fn defaults() {
     let settings = Settings::default();
-    assert_eq!(settings.button1_type, LinkType::Song);
-    assert_eq!(settings.button1_label(None), "Play on Apple Music");
-    assert_eq!(settings.button2_type, LinkType::Repository);
-    assert_eq!(settings.button2_label(None), "About This App");
+    assert_eq!(settings.button_type(ButtonSlot::One), LinkType::Song);
+    assert_eq!(
+        settings.button_label(ButtonSlot::One),
+        "Play on Apple Music"
+    );
+    assert_eq!(settings.button_type(ButtonSlot::Two), LinkType::Repository);
+    assert_eq!(settings.button_label(ButtonSlot::Two), "About This App");
     assert_eq!(settings.pause_hide_minutes, 5);
     assert_eq!(settings.repository_url, DEFAULT_REPOSITORY_URL);
 }
@@ -20,74 +22,88 @@ fn defaults() {
 #[test]
 fn label_follows_type_change_when_not_customized() {
     let mut settings = Settings::default();
-    settings.set_button1_type(LinkType::Artist);
-    assert_eq!(settings.button1_label(None), "View Artist");
+    settings.set_button_type(ButtonSlot::One, LinkType::Artist);
+    assert_eq!(settings.button_label(ButtonSlot::One), "View Artist");
 }
 
 #[test]
 fn custom_label_survives_type_change() {
     let mut settings = Settings::default();
-    settings.set_button1_label("My Label");
-    settings.set_button1_type(LinkType::Artist);
-    assert_eq!(settings.button1_label(None), "My Label");
+    settings.set_button_label(ButtonSlot::One, "My Label");
+    settings.set_button_type(ButtonSlot::One, LinkType::Artist);
+    assert_eq!(settings.button_label(ButtonSlot::One), "My Label");
 }
 
 #[test]
 fn setting_label_to_default_resumes_following() {
     let mut settings = Settings::default();
-    settings.set_button1_label("My Label");
+    settings.set_button_label(ButtonSlot::One, "My Label");
     // Writing the current default back drops the customization, so the label
     // follows the link type again.
-    let default_label = settings.button1_type.default_label(None);
-    settings.set_button1_label(default_label);
-    settings.set_button1_type(LinkType::Album);
-    assert_eq!(settings.button1_label(None), "View Album");
+    let default_label = settings.button_type(ButtonSlot::One).default_label();
+    settings.set_button_label(ButtonSlot::One, default_label);
+    settings.set_button_type(ButtonSlot::One, LinkType::Album);
+    assert_eq!(settings.button_label(ButtonSlot::One), "View Album");
 }
 
 #[test]
 fn empty_label_resumes_following() {
     let mut settings = Settings::default();
-    settings.set_button1_label("My Label");
-    settings.set_button1_label("");
+    settings.set_button_label(ButtonSlot::One, "My Label");
+    settings.set_button_label(ButtonSlot::One, "");
     assert_eq!(
-        settings.button1_label(None),
-        settings.button1_type.default_label(None)
+        settings.button_label(ButtonSlot::One),
+        settings.button_type(ButtonSlot::One).default_label()
     );
 }
 
 #[test]
 fn label_is_truncated_to_32_characters() {
     let mut settings = Settings::default();
-    settings.set_button1_label(&"x".repeat(64));
-    assert_eq!(settings.button1_label(None).chars().count(), 32);
+    settings.set_button_label(ButtonSlot::One, &"x".repeat(64));
+    assert_eq!(settings.button_label(ButtonSlot::One).chars().count(), 32);
 }
 
+/// The two slots have to behave identically. A rule that only reaches one of
+/// them leaves the menu looking the same while the buttons disagree.
 #[test]
-fn song_label_follows_source() {
+fn both_slots_behave_identically() {
     let mut settings = Settings::default();
+    for slot in ButtonSlot::ALL {
+        settings.set_button_type(slot, LinkType::Artist);
+        assert_eq!(settings.button_type(slot), LinkType::Artist);
+        assert_eq!(settings.button_label(slot), "View Artist");
+
+        settings.set_button_label(slot, "Mine");
+        assert_eq!(settings.button_label(slot), "Mine");
+    }
+    // A write to one slot must not leak into the other.
+    settings.set_button_type(ButtonSlot::One, LinkType::Album);
+    assert_eq!(settings.button_type(ButtonSlot::Two), LinkType::Artist);
+}
+
+/// Labels go to Discord, so they stay English whatever the menu is set to.
+#[test]
+fn button_labels_are_never_localized() {
+    let mut settings = Settings::default();
+    settings.language = AppLanguage::Ja;
     assert_eq!(
-        settings.button1_label(Some(MusicSourceId::AppleMusic)),
+        settings.button_label(ButtonSlot::One),
         "Play on Apple Music"
-    );
-    // A custom label wins regardless of source.
-    settings.set_button1_label("My Label");
-    assert_eq!(
-        settings.button1_label(Some(MusicSourceId::AppleMusic)),
-        "My Label"
     );
 }
 
 #[test]
 fn round_trips_through_json_with_defaults_for_missing_keys() {
     let mut settings = Settings::default();
-    settings.set_button1_label("My Label");
+    settings.set_button_label(ButtonSlot::One, "My Label");
     let encoded = serde_json::to_string(&settings).expect("serialize");
     let decoded: Settings = serde_json::from_str(&encoded).expect("deserialize");
-    assert_eq!(decoded.button1_label(None), "My Label");
+    assert_eq!(decoded.button_label(ButtonSlot::One), "My Label");
 
     // An empty file yields the same defaults as a fresh install.
     let empty: Settings = serde_json::from_str("{}").expect("deserialize empty");
-    assert_eq!(empty.button2_type, LinkType::Repository);
+    assert_eq!(empty.button_type(ButtonSlot::Two), LinkType::Repository);
     assert_eq!(empty.pause_hide_minutes, 5);
 }
 
@@ -128,16 +144,36 @@ fn every_link_type_is_named_in_both_languages() {
     }
 }
 
+/// Writing a type's own default label back must never read as a customization,
+/// or the label would stop following the destination for good.
 #[test]
-fn every_link_type_declares_its_own_default_label_as_a_default() {
-    // `set_type` relies on this to tell "the user picked this" apart from
-    // "this is just what the previous type suggested".
+fn writing_a_types_own_default_is_not_a_customization() {
     for candidate in LinkType::SELECTABLE {
-        let default = candidate.default_label(None);
-        assert!(
-            candidate.default_labels().contains(&default),
-            "{candidate:?} would treat its own default as a customization"
+        let mut settings = Settings::default();
+        settings.set_button_type(ButtonSlot::One, candidate);
+        settings.set_button_label(ButtonSlot::One, candidate.default_label());
+        settings.set_button_type(ButtonSlot::One, LinkType::Album);
+        assert_eq!(
+            settings.button_label(ButtonSlot::One),
+            "View Album",
+            "{candidate:?} treated its own default as a customization"
         );
+    }
+}
+
+/// Every link type needs a distinct default label, since the label is what
+/// tells a customization from a leftover.
+#[test]
+fn enabled_link_types_have_distinct_default_labels() {
+    let mut seen: Vec<&str> = Vec::new();
+    for candidate in LinkType::SELECTABLE {
+        if candidate == LinkType::Disabled {
+            continue;
+        }
+        let label = candidate.default_label();
+        assert!(!label.is_empty(), "{candidate:?} has no default label");
+        assert!(!seen.contains(&label), "{candidate:?} reuses {label:?}");
+        seen.push(label);
     }
 }
 

@@ -11,29 +11,11 @@
 //! it closes. See `tray::take_menu_request` for the part that makes a click
 //! something the event loop can act on before the menu appears.
 
-use crate::t;
+use crate::t_fmt;
 
 use super::i18n::{t, AppLanguage};
-use super::settings_model::{BadgeLabelType, LinkType, Settings, PAUSE_HIDE_CHOICES};
+use super::settings_model::{BadgeLabelType, ButtonSlot, LinkType, Settings, PAUSE_HIDE_CHOICES};
 use super::status_lines;
-
-/// Which of the two configurable Discord buttons a row is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonSlot {
-    One,
-    Two,
-}
-
-impl ButtonSlot {
-    pub const ALL: [ButtonSlot; 2] = [ButtonSlot::One, ButtonSlot::Two];
-
-    fn number(self) -> u8 {
-        match self {
-            ButtonSlot::One => 1,
-            ButtonSlot::Two => 2,
-        }
-    }
-}
 
 /// Something the user asked for by clicking a row.
 ///
@@ -136,7 +118,7 @@ pub fn build_menu(input: &MenuInput) -> Vec<MenuRow> {
     // hidden behind the same wording that means "go and look".
     match input.update_available {
         Some(tag) => rows.push(MenuRow::Item {
-            label: t!(
+            label: t_fmt!(
                 language,
                 "Update Available: {tag}",
                 "アップデートがあります: {tag}"
@@ -158,7 +140,7 @@ pub fn build_menu(input: &MenuInput) -> Vec<MenuRow> {
 }
 
 fn button_submenu(slot: ButtonSlot, settings: &Settings, language: AppLanguage) -> MenuRow {
-    let current = button_type(slot, settings);
+    let current = settings.button_type(slot);
     let number = slot.number();
     let type_name = current.display_name(language);
 
@@ -185,9 +167,9 @@ fn button_submenu(slot: ButtonSlot, settings: &Settings, language: AppLanguage) 
         // mislead.
         rows.push(MenuRow::Info(t(language, "Change Label…", "ラベルを変更…")));
     } else {
-        let label = button_label(slot, settings);
+        let label = settings.button_label(slot);
         rows.push(MenuRow::Item {
-            label: t!(
+            label: t_fmt!(
                 language,
                 "Change Label… (\"{label}\")",
                 "ラベルを変更…（\"{label}\"）"
@@ -197,7 +179,7 @@ fn button_submenu(slot: ButtonSlot, settings: &Settings, language: AppLanguage) 
     }
 
     MenuRow::Submenu {
-        label: t!(
+        label: t_fmt!(
             language,
             "Button {number}: {type_name}",
             "ボタン{number}: {type_name}"
@@ -210,7 +192,7 @@ fn badge_submenu(settings: &Settings, language: AppLanguage) -> MenuRow {
     let current = settings.badge_label;
     let name = current.display_name(language);
     MenuRow::Submenu {
-        label: t!(language, "Status Badge: {name}", "ステータスバッジ: {name}"),
+        label: t_fmt!(language, "Status Badge: {name}", "ステータスバッジ: {name}"),
         rows: BadgeLabelType::ALL
             .into_iter()
             .map(|candidate| MenuRow::Choice {
@@ -226,7 +208,7 @@ fn pause_submenu(settings: &Settings, language: AppLanguage) -> MenuRow {
     let current = settings.pause_hide_minutes;
     let name = pause_choice_name(current, language);
     MenuRow::Submenu {
-        label: t!(language, "When Paused: {name}", "一時停止時: {name}"),
+        label: t_fmt!(language, "When Paused: {name}", "一時停止時: {name}"),
         rows: PAUSE_HIDE_CHOICES
             .into_iter()
             .map(|minutes| MenuRow::Choice {
@@ -245,7 +227,7 @@ pub fn pause_choice_name(minutes: i32, language: AppLanguage) -> String {
         -1 => t(language, "Keep Showing", "表示し続ける"),
         0 => t(language, "Hide Immediately", "すぐに消す"),
         1 => t(language, "Hide After 1 Minute", "1分後に消す"),
-        n => t!(language, "Hide After {n} Minutes", "{n}分後に消す"),
+        n => t_fmt!(language, "Hide After {n} Minutes", "{n}分後に消す"),
     }
 }
 
@@ -253,7 +235,7 @@ fn language_submenu(current: AppLanguage) -> MenuRow {
     MenuRow::Submenu {
         label: {
             let name = current.display_name();
-            t!(current, "Language: {name}", "言語: {name}")
+            t_fmt!(current, "Language: {name}", "言語: {name}")
         },
         rows: AppLanguage::ALL
             .into_iter()
@@ -263,22 +245,6 @@ fn language_submenu(current: AppLanguage) -> MenuRow {
                 checked: candidate == current,
             })
             .collect(),
-    }
-}
-
-fn button_type(slot: ButtonSlot, settings: &Settings) -> LinkType {
-    match slot {
-        ButtonSlot::One => settings.button1_type,
-        ButtonSlot::Two => settings.button2_type,
-    }
-}
-
-/// The label as the menu shows it, which is the Apple Music wording for an
-/// uncustomized song button — same as macOS's menu-facing getter.
-fn button_label(slot: ButtonSlot, settings: &Settings) -> String {
-    match slot {
-        ButtonSlot::One => settings.button1_label(None),
-        ButtonSlot::Two => settings.button2_label(None),
     }
 }
 
@@ -391,21 +357,21 @@ fn language_from_slug(slug: &str) -> Option<AppLanguage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::models::{ConnState, SourceState};
+    use crate::core::models::{ConnState, MusicState};
 
-    fn menu(settings: &Settings, source: &SourceState) -> Vec<MenuRow> {
+    fn menu(settings: &Settings, source: &MusicState) -> Vec<MenuRow> {
         menu_with(settings, source, false, None)
     }
 
     fn menu_with(
         settings: &Settings,
-        source: &SourceState,
+        source: &MusicState,
         launch_at_login: bool,
         update_available: Option<&str>,
     ) -> Vec<MenuRow> {
         build_menu(&MenuInput {
             status: status_lines::Input {
-                apple_music: source,
+                music: source,
                 discord_state: ConnState::Disconnected,
                 language: settings.language,
             },
@@ -416,7 +382,7 @@ mod tests {
     }
 
     fn default_menu() -> Vec<MenuRow> {
-        menu(&Settings::default(), &SourceState::default())
+        menu(&Settings::default(), &MusicState::default())
     }
 
     /// Every row anywhere in the tree, flattened.
@@ -462,10 +428,10 @@ mod tests {
     #[test]
     fn the_status_rows_come_first_and_are_not_clickable() {
         let settings = Settings::default();
-        let source = SourceState::default();
+        let source = MusicState::default();
         let rows = menu(&settings, &source);
         let expected = status_lines::lines(&status_lines::Input {
-            apple_music: &source,
+            music: &source,
             discord_state: ConnState::Disconnected,
             language: AppLanguage::En,
         });
@@ -530,8 +496,8 @@ mod tests {
     #[test]
     fn each_button_submenu_marks_its_current_destination() {
         let mut settings = Settings::default();
-        settings.set_button1_type(LinkType::Album);
-        let rows = menu(&settings, &SourceState::default());
+        settings.set_button_type(ButtonSlot::One, LinkType::Album);
+        let rows = menu(&settings, &MusicState::default());
 
         let button1 = submenu(&rows, "Button 1:");
         assert_eq!(checked_labels(button1), vec!["Album Page"]);
@@ -565,8 +531,8 @@ mod tests {
     #[test]
     fn a_disabled_button_offers_no_label_to_change() {
         let mut settings = Settings::default();
-        settings.set_button1_type(LinkType::Disabled);
-        let rows = menu(&settings, &SourceState::default());
+        settings.set_button_type(ButtonSlot::One, LinkType::Disabled);
+        let rows = menu(&settings, &MusicState::default());
         let button1 = submenu(&rows, "Button 1:");
 
         assert!(
@@ -622,7 +588,7 @@ mod tests {
     fn japanese_translates_the_menu_but_never_discord_wording() {
         let mut settings = Settings::default();
         settings.language = AppLanguage::Ja;
-        let rows = menu(&settings, &SourceState::default());
+        let rows = menu(&settings, &MusicState::default());
         let flat = all_rows(&rows);
 
         let has = |text: &str| {
@@ -644,7 +610,7 @@ mod tests {
     #[test]
     fn launch_at_login_reflects_the_os_not_the_settings_file() {
         let settings = Settings::default();
-        let source = SourceState::default();
+        let source = MusicState::default();
         let off = menu_with(&settings, &source, false, None);
         let on = menu_with(&settings, &source, true, None);
 
@@ -678,7 +644,7 @@ mod tests {
     fn a_known_update_replaces_the_check_row_and_names_the_version() {
         let rows = menu_with(
             &Settings::default(),
-            &SourceState::default(),
+            &MusicState::default(),
             false,
             Some("v0.2.0"),
         );

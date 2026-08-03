@@ -30,7 +30,8 @@ mod imp {
     use std::time::{Duration, Instant, SystemTime};
 
     use ceyrad::core::activity_builder;
-    use ceyrad::core::models::{CatalogInfo, MusicSourceId, PlayerState, TrackInfo};
+    use ceyrad::core::apple_music;
+    use ceyrad::core::models::{CatalogInfo, PlayerState, TrackInfo};
     use ceyrad::core::settings_model::Settings;
     use ceyrad::discord::pipe::{Pipe, Wakeup};
     use ceyrad::discord::protocol::handshake_payload;
@@ -46,7 +47,7 @@ mod imp {
     /// *this* application id, not that it will fetch some image somewhere.
     const SAMPLE_ARTWORK: &str = "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/41/a0/b6/41a0b6b9-a720-25e5-fc69-7e9c3ca1296e/26UMGIM73217.rgb.jpg/512x512bb.jpg";
 
-    fn sample_activity(source: MusicSourceId, artwork: &str) -> Value {
+    fn sample_activity(artwork: &str) -> Value {
         let mut track = TrackInfo::new("Ceyrad Probe", "Test Artist", "Test Album");
         track.duration_sec = Some(240.0);
         track.position_sec = Some(30.0);
@@ -62,21 +63,22 @@ mod imp {
             PlayerState::Playing,
             Some(&catalog),
             &Settings::default(),
-            source,
             SystemTime::now(),
         );
         Value::Object(activity)
     }
 
     pub fn run() -> io::Result<()> {
-        let source = MusicSourceId::AppleMusic;
-        let client_id = source.discord_client_id();
+        let client_id = apple_music::DISCORD_CLIENT_ID;
         let artwork = std::env::args().nth(1).unwrap_or_else(|| {
             // Not a lookup: the point is to take the catalog out of the picture
             // entirely, so a missing thumbnail can only be Discord's doing.
             SAMPLE_ARTWORK.to_string()
         });
-        println!("source: {} / client_id: {client_id}", source.display_name());
+        println!(
+            "source: {} / client_id: {client_id}",
+            apple_music::DISPLAY_NAME
+        );
         println!("artwork: {artwork}");
 
         let pipe = Pipe::connect()?;
@@ -120,7 +122,7 @@ mod imp {
                                 if !ready && frame.event().as_deref() == Some("READY") {
                                     ready = true;
                                     nonce += 1;
-                                    let activity = sample_activity(source, &artwork);
+                                    let activity = sample_activity(&artwork);
                                     // Printed in full: if Discord answers with
                                     // an ERROR frame, the next thing anyone
                                     // will want is the exact payload it

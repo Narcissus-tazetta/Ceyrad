@@ -1,0 +1,419 @@
+{
+  "description": "Discord Activity build vectors shared by the macOS (Swift) and Windows (Rust) builds. See spec/README.md.",
+  "cases": [
+    {
+      "name": "playing without a catalog drops the song button and keeps the repository one",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 50,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {},
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "timestamps": {
+          "start": 1699999950000,
+          "end": 1700000150000
+        },
+        "buttons": [
+          {
+            "label": "About This App",
+            "url": "https://github.com/Narcissus-tazetta/Ceyrad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a resolved catalog adds the artwork and both buttons",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 50,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": {
+        "songURL": "https://music.apple.com/song",
+        "artistURL": "https://music.apple.com/artist",
+        "albumURL": "https://music.apple.com/album",
+        "artworkURL": "https://example.com/art/512x512bb.jpg"
+      },
+      "settings": {},
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "assets": {
+          "large_image": "https://example.com/art/512x512bb.jpg",
+          "large_text": "Album"
+        },
+        "timestamps": {
+          "start": 1699999950000,
+          "end": 1700000150000
+        },
+        "buttons": [
+          {
+            "label": "Play on Apple Music",
+            "url": "https://music.apple.com/song"
+          },
+          {
+            "label": "About This App",
+            "url": "https://github.com/Narcissus-tazetta/Ceyrad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a stale position sample is carried forward by the elapsed time",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 50,
+        "positionSampledAtUnix": 1699999990
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "timestamps": {
+          "start": 1699999940000,
+          "end": 1700000140000
+        }
+      }
+    },
+    {
+      "name": "paused with artwork puts the stop position on the album row",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 168,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "paused",
+      "catalog": {
+        "artworkURL": "https://example.com/art/512x512bb.jpg"
+      },
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "assets": {
+          "large_image": "https://example.com/art/512x512bb.jpg",
+          "large_text": "Album · ⏸ Paused at 2:48"
+        }
+      }
+    },
+    {
+      "name": "paused without artwork moves the stop position to the artist row and retreats the badge",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 3725,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "paused",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "⏸ Paused at 1:02:05 · Artist",
+        "status_display_type": 0
+      }
+    },
+    {
+      "name": "paused without a position omits the time",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "paused",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled",
+        "badgeLabel": "track"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "⏸ Paused · Artist",
+        "status_display_type": 2
+      }
+    },
+    {
+      "name": "empty fields fall back to placeholders",
+      "track": {
+        "name": "",
+        "artist": "",
+        "album": "",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Unknown Track",
+        "state": "Unknown Artist",
+        "status_display_type": 1
+      }
+    },
+    {
+      "name": "a one-character field is padded to Discord's minimum with a braille blank",
+      "track": {
+        "name": "A",
+        "artist": "B",
+        "album": "",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "A⠀",
+        "state": "B⠀",
+        "status_display_type": 1
+      }
+    },
+    {
+      "name": "a long field is cut to 128 scalars",
+      "track": {
+        "name": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+        "artist": "Artist",
+        "album": "",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+        "state": "Artist",
+        "status_display_type": 1
+      }
+    },
+    {
+      "name": "cutting a field never leaves half a character",
+      "track": {
+        "name": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧",
+        "artist": "Artist",
+        "album": "",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩",
+        "state": "Artist",
+        "status_display_type": 1
+      }
+    },
+    {
+      "name": "a button label is cut to 32 scalars without splitting a character",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Label": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "buttons": [
+          {
+            "label": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨",
+            "url": "https://github.com/Narcissus-tazetta/Ceyrad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "two buttons pointing at the same url collapse to one",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "repository",
+        "button2Type": "repository"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "buttons": [
+          {
+            "label": "About This App",
+            "url": "https://github.com/Narcissus-tazetta/Ceyrad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a custom url that is not http(s) is dropped rather than sent",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": null,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "custom",
+        "button2Type": "disabled",
+        "customURL": "ftp://example.com"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1
+      }
+    },
+    {
+      "name": "a stopped-length duration still yields no progress bar when the position is unknown",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": null,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1
+      }
+    },
+    {
+      "name": "a position past the end is clamped to the duration instead of dropping the bar",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 190,
+        "positionSampledAtUnix": 1699999900
+      },
+      "playerState": "playing",
+      "catalog": null,
+      "settings": {
+        "button1Type": "disabled",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "timestamps": {
+          "start": 1699999800000,
+          "end": 1700000000000
+        }
+      }
+    }
+  ]
+}

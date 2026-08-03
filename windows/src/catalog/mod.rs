@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use crate::app::log;
 use crate::core::itunes;
-use crate::core::models::{CatalogInfo, MusicSourceId};
+use crate::core::models::CatalogInfo;
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winhttp::{ComApartment, Http};
 
@@ -51,7 +51,6 @@ const FALLBACK_COUNTRY: &str = "US";
 
 #[derive(Debug, Clone)]
 pub struct Request {
-    pub source: MusicSourceId,
     /// `TrackInfo::identity`, so a late answer can be matched against whatever
     /// is playing by the time it lands.
     pub key: String,
@@ -74,7 +73,6 @@ pub enum Outcome {
 
 #[derive(Debug, Clone)]
 pub struct Resolved {
-    pub source: MusicSourceId,
     pub key: String,
     pub outcome: Outcome,
 }
@@ -171,7 +169,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
             // Waiting is exactly when a newer track arrives, so look again
             // before spending the slot on one that is no longer playing.
             queue.drain_from(&requests);
-            if queue.has_newer_for(request.source) {
+            if queue.has_newer() {
                 continue;
             }
             if let Some(catalog) = cache.get(&request.key) {
@@ -222,7 +220,6 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
 
 fn send(results: &Sender<Resolved>, wake: &WakeEvent, request: &Request, outcome: Outcome) {
     let _ = results.send(Resolved {
-        source: request.source,
         key: request.key.clone(),
         outcome,
     });
@@ -238,46 +235,37 @@ impl Outcome {
     }
 }
 
-/// At most one outstanding request per source.
+/// At most one outstanding request.
 ///
 /// A burst of skips leaves several requests queued and only the last is still
-/// on screen, so the rest are dropped without spending a rate-limit slot. Doing
-/// that per source rather than globally is what stops one player's lookup from
-/// swallowing the other's when both are playing.
+/// on screen, so the earlier ones are dropped rather than each spending a
+/// rate-limit slot on a track nobody is listening to any more.
 struct Queue {
-    pending: VecDeque<Request>,
+    pending: Option<Request>,
 }
 
 impl Queue {
     fn new() -> Self {
-        Self {
-            pending: VecDeque::new(),
-        }
+        Self { pending: None }
     }
 
     fn is_empty(&self) -> bool {
-        self.pending.is_empty()
+        self.pending.is_none()
     }
 
+    /// Replaces whatever was queued: only the newest track is worth asking about.
     fn push(&mut self, request: Request) {
-        match self
-            .pending
-            .iter_mut()
-            .find(|queued| queued.source == request.source)
-        {
-            Some(queued) => *queued = request,
-            None => self.pending.push_back(request),
-        }
+        self.pending = Some(request);
     }
 
     fn pop(&mut self) -> Option<Request> {
-        self.pending.pop_front()
+        self.pending.take()
     }
 
-    /// Whether a newer request for this source arrived while we were waiting,
-    /// which makes the one in hand not worth a lookup.
-    fn has_newer_for(&self, source: MusicSourceId) -> bool {
-        self.pending.iter().any(|queued| queued.source == source)
+    /// Whether a newer request arrived while we were waiting, which makes the
+    /// one in hand not worth a lookup.
+    fn has_newer(&self) -> bool {
+        self.pending.is_some()
     }
 
     /// Takes everything already queued without blocking. A disconnected

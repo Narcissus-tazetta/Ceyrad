@@ -5,8 +5,10 @@ use std::time::{Duration, SystemTime};
 use serde_json::{Map, Value};
 
 use ceyrad::core::activity_builder::{build, is_valid_button_url};
-use ceyrad::core::models::{CatalogInfo, MusicSourceId, PlayerState, TrackInfo};
-use ceyrad::core::settings_model::{BadgeLabelType, LinkType, Settings, DEFAULT_REPOSITORY_URL};
+use ceyrad::core::models::{CatalogInfo, PlayerState, TrackInfo};
+use ceyrad::core::settings_model::{
+    BadgeLabelType, ButtonSlot, LinkType, Settings, DEFAULT_REPOSITORY_URL,
+};
 
 type Activity = Map<String, Value>;
 
@@ -39,14 +41,7 @@ fn build_now(
     catalog: Option<&CatalogInfo>,
     settings: &Settings,
 ) -> Activity {
-    build(
-        track,
-        state,
-        catalog,
-        settings,
-        MusicSourceId::AppleMusic,
-        SystemTime::now(),
-    )
+    build(track, state, catalog, settings, SystemTime::now())
 }
 
 fn string_field<'a>(activity: &'a Activity, key: &str) -> &'a str {
@@ -195,7 +190,6 @@ fn stale_position_sample_is_corrected_for_elapsed_time() {
         PlayerState::Playing,
         None,
         &Settings::default(),
-        MusicSourceId::AppleMusic,
         now,
     );
     let start = activity["timestamps"]["start"].as_i64().unwrap();
@@ -327,8 +321,8 @@ fn artist_badge_falls_back_to_app_name_when_pause_label_is_on_artist_line() {
 #[test]
 fn duplicate_button_urls_are_deduplicated() {
     let mut settings = Settings::default();
-    settings.set_button1_type(LinkType::Repository);
-    settings.set_button2_type(LinkType::Repository);
+    settings.set_button_type(ButtonSlot::One, LinkType::Repository);
+    settings.set_button_type(ButtonSlot::Two, LinkType::Repository);
     let activity = build_now(&track(), PlayerState::Playing, None, &settings);
     let buttons = buttons(&activity).expect("buttons");
     assert_eq!(buttons.len(), 1);
@@ -349,8 +343,8 @@ fn unresolved_catalog_drops_button_instead_of_fallback() {
 #[test]
 fn both_buttons_off_omits_buttons_key() {
     let mut settings = Settings::default();
-    settings.set_button1_type(LinkType::Disabled);
-    settings.set_button2_type(LinkType::Disabled);
+    settings.set_button_type(ButtonSlot::One, LinkType::Disabled);
+    settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
     let activity = build_now(&track(), PlayerState::Playing, Some(&catalog()), &settings);
     assert!(activity.get("buttons").is_none());
 }
@@ -358,7 +352,7 @@ fn both_buttons_off_omits_buttons_key() {
 #[test]
 fn button2_promoted_when_button1_is_off() {
     let mut settings = Settings::default();
-    settings.set_button1_type(LinkType::Disabled);
+    settings.set_button_type(ButtonSlot::One, LinkType::Disabled);
     let activity = build_now(&track(), PlayerState::Playing, Some(&catalog()), &settings);
     let buttons = buttons(&activity).expect("buttons");
     assert_eq!(buttons.len(), 1);
@@ -383,8 +377,8 @@ fn two_buttons_with_resolved_catalog() {
 #[test]
 fn invalid_custom_url_is_skipped() {
     let mut settings = Settings::default();
-    settings.set_button1_type(LinkType::Custom);
-    settings.set_button2_type(LinkType::Disabled);
+    settings.set_button_type(ButtonSlot::One, LinkType::Custom);
+    settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
     settings.custom_url = "ftp://example.com".into();
     let activity = build_now(&track(), PlayerState::Playing, None, &settings);
     assert!(activity.get("buttons").is_none());
@@ -393,14 +387,13 @@ fn invalid_custom_url_is_skipped() {
 #[test]
 fn song_button_label_follows_source() {
     let mut settings = Settings::default();
-    settings.set_button2_type(LinkType::Disabled);
+    settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
 
     let apple_music = build(
         &track(),
         PlayerState::Playing,
         Some(&catalog()),
         &settings,
-        MusicSourceId::AppleMusic,
         SystemTime::now(),
     );
     assert_eq!(
@@ -412,14 +405,13 @@ fn song_button_label_follows_source() {
 #[test]
 fn custom_button_label_wins_over_source_default() {
     let mut settings = Settings::default();
-    settings.set_button2_type(LinkType::Disabled);
-    settings.set_button1_label("My Label");
+    settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
+    settings.set_button_label(ButtonSlot::One, "My Label");
     let apple_music = build(
         &track(),
         PlayerState::Playing,
         Some(&catalog()),
         &settings,
-        MusicSourceId::AppleMusic,
         SystemTime::now(),
     );
     assert_eq!(buttons(&apple_music).unwrap()[0]["label"], "My Label");
@@ -428,8 +420,8 @@ fn custom_button_label_wins_over_source_default() {
 #[test]
 fn button_label_is_truncated_to_32_characters() {
     let mut settings = Settings::default();
-    settings.set_button2_type(LinkType::Disabled);
-    settings.set_button1_label(&"x".repeat(64));
+    settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
+    settings.set_button_label(ButtonSlot::One, &"x".repeat(64));
     let activity = build_now(&track(), PlayerState::Playing, Some(&catalog()), &settings);
     let label = buttons(&activity).unwrap()[0]["label"].as_str().unwrap();
     assert_eq!(label.chars().count(), 32);

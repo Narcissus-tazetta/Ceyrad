@@ -3,9 +3,10 @@ import Foundation
 /// メニューバーに出すステータス行の組み立て。値入力の関数としてテスト可能にする。
 enum StatusLinesBuilder {
     struct Input {
-        var appleMusic = SourceState()
-        var appleMusicNotAuthorized = false
+        var music = MusicState()
+        var musicNotAuthorized = false
         var discordState: DiscordRPCClient.ConnState = .disconnected
+        var language: AppLanguage = .en
     }
 
     static func lines(_ input: Input) -> [String] {
@@ -16,12 +17,13 @@ enum StatusLinesBuilder {
     }
 
     private static func sourceLine(_ input: Input) -> String {
-        let name = MusicSourceDescriptor.appleMusic.displayName
-        let s = input.appleMusic
-        guard s.running else { return t("\(name): Not Running", "\(name): 未起動") }
+        let name = AppleMusic.displayName
+        let language = input.language
+        let s = input.music
+        guard s.running else { return t(language, "\(name): Not Running", "\(name): 未起動") }
         switch s.playerState {
         case .stopped:
-            return t("\(name): Stopped", "\(name): 停止中")
+            return t(language, "\(name): Stopped", "\(name): 停止中")
         case .playing:
             return "♪ \(name): \(trackLine(s.track))"
         case .paused:
@@ -30,18 +32,21 @@ enum StatusLinesBuilder {
     }
 
     private static func automationLines(_ input: Input) -> [String] {
-        guard input.appleMusic.running, input.appleMusicNotAuthorized else { return [] }
+        guard input.music.running, input.musicNotAuthorized else { return [] }
+        let language = input.language
         return [
-            t("Music Control: Not Authorized ⚠️", "ミュージックの操作: 未許可 ⚠️"),
+            t(language, "Music Control: Not Authorized ⚠️", "ミュージックの操作: 未許可 ⚠️"),
             t(
+                language,
                 "(System Settings > Privacy > Automation)",
                 "(システム設定 > プライバシーとセキュリティ > オートメーション)"
             ),
         ]
     }
 
+    /// Discordに関する文言は常に英語。Discord側の表記と揃えるため翻訳しない。
     private static func discordLine(_ input: Input) -> String {
-        guard input.appleMusic.running else {
+        guard input.music.running else {
             return "Discord: Idle (connects when a player starts)"
         }
         switch input.discordState {

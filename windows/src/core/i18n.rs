@@ -28,14 +28,18 @@ pub fn t(lang: AppLanguage, en: &str, ja: &str) -> String {
     }
 }
 
-/// As `t`, for strings that interpolate.
+/// As [`t`], for strings that interpolate.
+///
+/// Named apart from `t` on purpose: the two used to be `t` and `t!`, imported
+/// side by side from different paths, and telling which one a call site meant
+/// took a second look every time.
 ///
 /// `t(lang, &format!(…), &format!(…))` builds both sides, throws one away, then
 /// copies the survivor — three allocations to return one, on a path that runs
 /// several times a second while a player is active. This formats only the arm
 /// that is actually used.
 #[macro_export]
-macro_rules! t {
+macro_rules! t_fmt {
     ($lang:expr, $en:literal, $ja:literal $(,)?) => {
         match $lang {
             $crate::core::i18n::AppLanguage::En => format!($en),

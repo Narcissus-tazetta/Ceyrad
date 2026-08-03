@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 
 use super::format_time::format_time;
-use super::models::{CatalogInfo, MusicSourceId, PlayerState, TrackInfo};
-use super::settings_model::{BadgeLabelType, LinkType, Settings};
+use super::models::{CatalogInfo, PlayerState, TrackInfo};
+use super::settings_model::{BadgeLabelType, ButtonSlot, LinkType, Settings};
 use super::text;
 
 /// Discord requires string fields to be 2–128 characters.
@@ -22,7 +22,6 @@ pub fn build(
     player_state: PlayerState,
     catalog: Option<&CatalogInfo>,
     settings: &Settings,
-    source: MusicSourceId,
     now: SystemTime,
 ) -> Map<String, Value> {
     let mut activity = Map::new();
@@ -125,7 +124,7 @@ pub fn build(
         }
     }
 
-    let buttons = build_buttons(catalog, settings, source);
+    let buttons = build_buttons(catalog, settings);
     if !buttons.is_empty() {
         activity.insert("buttons".into(), json!(buttons));
     }
@@ -207,20 +206,13 @@ fn timestamps_equivalent(a: &Value, b: &Value) -> bool {
 }
 
 /// Discord allows at most 2 buttons, labels ≤ 32 chars, urls ≤ 512 chars.
-fn build_buttons(
-    catalog: Option<&CatalogInfo>,
-    settings: &Settings,
-    source: MusicSourceId,
-) -> Vec<Value> {
+fn build_buttons(catalog: Option<&CatalogInfo>, settings: &Settings) -> Vec<Value> {
     let mut buttons = Vec::new();
     let mut used_urls: Vec<String> = Vec::new();
     // An uncustomized label follows the source that is playing.
-    let configs = [
-        (settings.button1_type, settings.button1_label(Some(source))),
-        (settings.button2_type, settings.button2_label(Some(source))),
-    ];
-
-    for (link_type, label) in configs {
+    for slot in ButtonSlot::ALL {
+        let link_type = settings.button_type(slot);
+        let label = settings.button_label(slot);
         if link_type == LinkType::Disabled {
             continue;
         }
@@ -347,7 +339,6 @@ mod tests {
             PlayerState::Playing,
             catalog,
             &Settings::default(),
-            MusicSourceId::AppleMusic,
             SystemTime::now(),
         )
     }
