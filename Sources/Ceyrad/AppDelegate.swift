@@ -274,7 +274,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// デバウンス窓が明けた実際の送信。
     ///
     /// 未接続なら捨てる: 接続できたら新しく組み立て直したものが送られるので、そちらのほうが新しい。
-    /// 送れたときだけ`lastSent`を更新するので、落ちた送信が次回の抑止に効くことはない。
+    ///
+    /// `setActivity`はソケット用キューに渡すだけで成否を返さないため、`lastSent`は
+    /// 「Discordに届いた」ではなく「渡した」時点で更新される。それでも届かなかった内容が
+    /// その後の送信を抑止し続けないのは、書き込みに失敗したソケットが`teardown`から
+    /// `.disconnected`を通り、`handleRPCState`がそこで`lastSent`を捨てるため——
+    /// つまり抑止が生き残るのは接続が生きている間だけ、という不変条件で担保している。
+    /// （Windows版は同期送信なので戻り値を見て更新する。行き着く先は同じ）
     private func flushActivity(_ activity: [String: Any]?) {
         guard rpc.state == .connected else { return }
         guard !lastSent.isEquivalent(to: activity) else { return }
