@@ -66,6 +66,31 @@ Discordの仕様で、RPCのボタンは自分自身からは見えません。�
 
 [`windows/`](windows/README.md) にWindows向けのRust移植版があります。考え方は同じ（通知領域のアイコンからDiscordのRich Presenceを駆動）で、Apple Musicの通知の代わりにSMTCから再生中の曲を読み取ります。単体`ceyrad.exe`（またはインストーラ）として、macOS版と同じ[Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases)に添付されます。アートワークと曲/アーティスト/アルバムのボタンは、macOS版と同じiTunes Search APIから解決します。機能一覧・ビルド方法・現状は[windows/README.md](windows/README.md)を参照してください。
 
+## パフォーマンス
+
+Ceyradは完全イベント駆動（ポーリングなし）のため、何も起きていない間はほぼゼロコストで待機する。
+
+**macOS**
+
+| | アイドル時（Apple Music未再生） | 再生中 |
+|---|---|---|
+| CPU | 0%前後 | 0%前後 |
+| メモリフットプリント | 約29MB | 約20〜29MB |
+| スレッド数 | 3 | 3 |
+
+Apple Silicon（macOS 26.6）上で、CPUとスレッド数は`top -pid <pid>`、メモリは`footprint <pid>`の`phys_footprint`（アクティビティモニタが表示するのと同じ値）で計測。再生中でも常駐コストは増えない — 新規スレッドは立ち上がらず、フットプリントもアイドル時と同じ範囲に収まる。
+
+**Windows**
+
+| | アイドル時（曲間） | 再生中（Apple Music for Windows） |
+|---|---|---|
+| CPU | 0%前後 | 0%前後 |
+| Working Set | 約28.9MB | 約29.2MB |
+| Private Memory | 約4.8MB | 約5.0MB |
+| スレッド数 | 6 | 11 |
+
+`ceyrad.exe`を`Get-Counter`（1秒間隔サンプリング）で計測。プレイヤー検知後はSMTC/カタログ処理のためスレッド数が増えるが、CPUはこのサンプリング粒度では0%に張り付く — [windows/README.md](windows/README.md#what-this-costs-while-it-sits-there)にある通り、280msごとの`TimelinePropertiesChanged`処理も1秒粒度では検出限界以下のため。
+
 ---
 
 ## 開発

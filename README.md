@@ -66,6 +66,31 @@ It's detected automatically and connects (if a player is running, the status app
 
 There's a Rust rewrite for Windows in [`windows/`](windows/README.md) — same idea (a notification-area icon driving Discord Rich Presence), reading the current track from SMTC instead of Apple Music notifications. It ships as a portable `ceyrad.exe` (or an installer) attached to the same [Releases](https://github.com/Narcissus-tazetta/Ceyrad/releases) as the macOS build. Artwork and the song/artist/album buttons come from the same iTunes Search API this build uses — see [windows/README.md](windows/README.md) for the full feature matrix, build instructions, and status.
 
+## Performance
+
+Ceyrad is fully event-driven (no polling), so it stays idle at essentially zero cost when nothing is happening.
+
+**macOS**
+
+| | Idle (Apple Music not playing) | Playing |
+|---|---|---|
+| CPU | ~0% | ~0% |
+| Memory footprint | ~29 MB | ~20–29 MB |
+| Threads | 3 | 3 |
+
+Measured on Apple Silicon (macOS 26.6) with `top -pid <pid>` (CPU/threads) and `footprint <pid>` → `phys_footprint` (memory), the same figures Activity Monitor reports. Playback doesn't add resident cost — no new threads spin up, and the footprint stays in the same range as idle.
+
+**Windows**
+
+| | Idle (no track) | Playing (Apple Music for Windows) |
+|---|---|---|
+| CPU | ~0% | ~0% |
+| Working set | ~28.9 MB | ~29.2 MB |
+| Private memory | ~4.8 MB | ~5.0 MB |
+| Threads | 6 | 11 |
+
+Measured with `Get-Counter` (1-second sampling) on `ceyrad.exe`. The thread count rises once a player is detected (SMTC/catalog work spins up); CPU stays pinned at 0% at this sampling granularity, since even the 280ms `TimelinePropertiesChanged` handling described in [windows/README.md](windows/README.md#what-this-costs-while-it-sits-there) is too brief to register.
+
 ---
 
 ## Development
