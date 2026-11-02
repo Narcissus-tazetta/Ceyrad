@@ -33,6 +33,7 @@ mod imp {
     use ceyrad::core::apple_music;
     use ceyrad::core::models::{CatalogInfo, PlayerState, TrackInfo};
     use ceyrad::core::settings_model::Settings;
+    use ceyrad::core::source::Source;
     use ceyrad::discord::pipe::{Pipe, Wakeup};
     use ceyrad::discord::protocol::handshake_payload;
     use ceyrad::discord::protocol::{set_activity_payload, FrameDecoder, Opcode, ProtocolError};
@@ -59,6 +60,7 @@ mod imp {
         };
 
         let activity = activity_builder::build(
+            Source::AppleMusic,
             &track,
             PlayerState::Playing,
             Some(&catalog),

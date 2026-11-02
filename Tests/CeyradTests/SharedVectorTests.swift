@@ -14,6 +14,7 @@ final class SharedVectorTests: XCTestCase {
 
     private struct Case: Decodable {
         var name: String
+        var source: String?
         var track: TrackSpec
         var playerState: String
         var catalog: CatalogSpec?
@@ -80,6 +81,7 @@ final class SharedVectorTests: XCTestCase {
                 playerState: playerState(testCase.playerState),
                 catalog: testCase.catalog.map(catalog(from:)),
                 settings: settings,
+                source: testCase.source == "youtubeMusic" ? .youtubeMusic : .appleMusic,
                 now: Date(timeIntervalSince1970: testCase.nowUnix)
             )
 

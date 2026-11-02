@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 use ceyrad::core::activity_builder::build;
 use ceyrad::core::models::{CatalogInfo, PlayerState, TrackInfo};
 use ceyrad::core::settings_model::{BadgeLabelType, ButtonSlot, LinkType, Settings};
+use ceyrad::core::source::Source;
 
 #[derive(Deserialize)]
 struct Spec {
@@ -24,6 +25,9 @@ struct Spec {
 #[serde(rename_all = "camelCase")]
 struct Case {
     name: String,
+    /// Absent means Apple Music.
+    #[serde(default)]
+    source: Option<String>,
     track: TrackSpec,
     player_state: String,
     catalog: Option<CatalogSpec>,
@@ -94,6 +98,7 @@ fn every_vector_builds_exactly_what_the_spec_says() {
 
     for case in &spec.cases {
         let activity = build(
+            source(case.source.as_deref()),
             &track(&case.track),
             player_state(&case.player_state),
             case.catalog.as_ref().map(catalog).as_ref(),
@@ -106,6 +111,14 @@ fn every_vector_builds_exactly_what_the_spec_says() {
             "{}",
             case.name
         );
+    }
+}
+
+fn source(raw: Option<&str>) -> Source {
+    match raw {
+        None | Some("appleMusic") => Source::AppleMusic,
+        Some("youtubeMusic") => Source::YouTubeMusic,
+        Some(other) => panic!("unknown source: {other}"),
     }
 }
 

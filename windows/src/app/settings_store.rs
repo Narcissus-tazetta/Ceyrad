@@ -19,6 +19,9 @@ const FILE_NAME: &str = "settings.json";
 
 /// Comma-separated AUMIDs, for installs whose ids we do not recognise yet.
 const ENV_APPLE_MUSIC_AUMID: &str = "CEYRAD_AUMID_APPLE_MUSIC";
+/// Likewise for the browser YouTube Music plays in; only read once detection
+/// is switched on.
+const ENV_BROWSER_AUMID: &str = "CEYRAD_AUMID_BROWSER";
 
 pub fn settings_path() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA")?;
@@ -111,6 +114,7 @@ fn temp_sibling(path: &Path) -> PathBuf {
 pub fn aumid_overrides_from_env() -> AumidOverrides {
     AumidOverrides {
         apple_music: split_env(ENV_APPLE_MUSIC_AUMID),
+        browsers: split_env(ENV_BROWSER_AUMID),
     }
 }
 

@@ -30,21 +30,22 @@ use windows::Win32::System::Threading::SetEvent;
 use crate::app::connection::{Connection, Sent};
 use crate::catalog::{Outcome, Request as CatalogRequest, Resolver};
 use crate::core::activity_builder;
-use crate::core::apple_music;
 use crate::core::debouncer::Debouncer;
 use crate::core::i18n::t;
 use crate::core::menu_model::{self, MenuAction};
-use crate::core::models::{ConnState, MusicState, PlayerState};
+use crate::core::models::{CatalogInfo, ConnState, MusicState, PlayerState};
 use crate::core::settings_model::{ButtonSlot, Settings};
+use crate::core::source::{select_source, Source};
 use crate::core::status_lines;
 use crate::core::timers::{Timer, Timers};
 use crate::core::track_change::{position_jumped, same_identity};
 use crate::core::update_check::Release;
 use crate::core::url_prompt;
+use crate::core::youtube_music;
 use crate::discord::client::Event as DiscordEvent;
 use crate::discord::pipe::{Event as WakeEvent, Wakeup};
 use crate::launch_at_login;
-use crate::smtc::Watcher;
+use crate::smtc::{SessionState, Watcher};
 use crate::tray::{self, dialog, Tray};
 use crate::updater::{self, Outcome as UpdateOutcome, Updater};
 
@@ -79,12 +80,24 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// capture anything — can nudge the event loop out of its wait.
 static WAKE_HANDLE: AtomicIsize = AtomicIsize::new(0);
 
+/// What one SMTC reading changed in a source.
+struct Update {
+    /// Something on display moved.
+    changed: bool,
+    /// The track itself is different, not just where in it we are.
+    track_changed: bool,
+}
+
 pub struct App {
     settings: Settings,
+    /// Apple Music.
     music: MusicState,
-    /// Whether anything is currently on Discord. The presence is cleared and
-    /// rebuilt as this flips.
-    displaying: bool,
+    /// YouTube Music, as seen in a browser. Stays at its default while
+    /// detection is switched off.
+    youtube: MusicState,
+    /// The source currently on Discord, if any. The presence is cleared and
+    /// rebuilt as this changes.
+    displayed: Option<Source>,
 
     connection: Connection,
     watcher: Watcher,
@@ -141,15 +154,16 @@ impl App {
         let overrides = settings_store::aumid_overrides_from_env();
         if !overrides.is_empty() {
             log(&format!(
-                "AUMID overrides: apple music {:?}",
-                overrides.apple_music
+                "AUMID overrides: apple music {:?}, browsers {:?}",
+                overrides.apple_music, overrides.browsers
             ));
         }
 
         let wake = Arc::new(WakeEvent::new()?);
         WAKE_HANDLE.store(wake.handle().0 as isize, Ordering::SeqCst);
 
-        let watcher = Watcher::new(Arc::clone(&wake), overrides).map_err(io::Error::other)?;
+        let mut watcher = Watcher::new(Arc::clone(&wake), overrides).map_err(io::Error::other)?;
+        watcher.set_watch_browsers(settings.youtube_music_enabled);
 
         // Nothing keeps the Run entry in step with a portable exe that moved, so
         // it is checked here rather than left to fail quietly at the next logon.
@@ -163,7 +177,8 @@ impl App {
         Ok(Self {
             settings,
             music: MusicState::default(),
-            displaying: false,
+            youtube: MusicState::default(),
+            displayed: None,
             connection: Connection::new(),
             watcher,
             catalog: Resolver::new(Arc::clone(&wake)),
@@ -290,6 +305,7 @@ impl App {
                 self.persist_settings();
                 self.status_dirty = true;
             }
+            MenuAction::ToggleYouTubeMusic => self.toggle_youtube_music(),
             MenuAction::ToggleLaunchAtLogin => self.toggle_launch_at_login(),
             MenuAction::CheckForUpdates => {
                 log("checking for updates at your request");
@@ -318,6 +334,22 @@ impl App {
             }
             MenuAction::Quit => request_shutdown(),
         }
+    }
+
+    fn toggle_youtube_music(&mut self) {
+        let enabled = !self.settings.youtube_music_enabled;
+        self.settings.youtube_music_enabled = enabled;
+        log(&format!(
+            "{} detection: {}",
+            youtube_music::DISPLAY_NAME,
+            if enabled { "on" } else { "off" }
+        ));
+        self.watcher.set_watch_browsers(enabled);
+        if !enabled {
+            self.timers.cancel(Timer::YouTubeLoss);
+            self.clear_source(Source::YouTubeMusic);
+        }
+        self.settings_changed();
     }
 
     /// Flips the Run entry, then re-reads it.
@@ -441,22 +473,9 @@ impl App {
     fn settings_changed(&mut self) {
         self.persist_settings();
         self.status_dirty = true;
-
-        if !self.music.running {
-            self.go_dormant();
-            return;
-        }
-
-        if self.music.is_displayable() != self.displaying {
-            self.set_displaying(self.music.is_displayable());
-        } else {
-            self.attempt_connect();
-            // The pause timeout may have been what changed, so restart it
-            // rather than letting an old deadline stand.
-            self.cancel_pause_timer();
-            self.update_pause_timer();
-            self.push_activity();
-        }
+        // The pause timeout may have been what changed, so the clock restarts
+        // rather than letting an old deadline stand.
+        self.reconcile(true, true);
     }
 
     fn persist_settings(&self) {
@@ -467,6 +486,33 @@ impl App {
     }
 
     // MARK: - Music
+
+    fn state(&self, source: Source) -> &MusicState {
+        match source {
+            Source::AppleMusic => &self.music,
+            Source::YouTubeMusic => &self.youtube,
+        }
+    }
+
+    fn state_mut(&mut self, source: Source) -> &mut MusicState {
+        match source {
+            Source::AppleMusic => &mut self.music,
+            Source::YouTubeMusic => &mut self.youtube,
+        }
+    }
+
+    /// The Application the connection should be under: the source being shown,
+    /// else Apple Music while it is open, so the connection stays ready as it
+    /// always has. `None` means nothing is running and the app should be idle.
+    fn desired_source(&self) -> Option<Source> {
+        select_source(&self.music, &self.youtube)
+            .or_else(|| self.music.running.then_some(Source::AppleMusic))
+    }
+
+    fn displayed_is_paused(&self) -> bool {
+        self.displayed
+            .is_some_and(|source| self.state(source).player_state == PlayerState::Paused)
+    }
 
     fn handle_smtc(&mut self) {
         let snapshot = match self.watcher.take_snapshot() {
@@ -486,7 +532,14 @@ impl App {
                 self.logged_unknown_aumids.clear();
             }
             if self.logged_unknown_aumids.insert(aumid.clone()) {
-                log(&format!("smtc: ignoring unrecognised session {aumid}"));
+                if self.settings.youtube_music_enabled {
+                    log(&format!(
+                        "smtc: ignoring unrecognised session {aumid} \
+                         (if this is your browser, set CEYRAD_AUMID_BROWSER to it)"
+                    ));
+                } else {
+                    log(&format!("smtc: ignoring unrecognised session {aumid}"));
+                }
             }
         }
 
@@ -494,48 +547,35 @@ impl App {
         // anything happen?" has to be decided from the values. Without this the
         // presence would be rebuilt and compared four times a second for a
         // track that is simply playing on.
+        let now = Instant::now();
         let mut changed = false;
         let mut track_changed = false;
 
         match snapshot.apple_music.as_ref() {
             Some(session) => {
-                let same_track = same_identity(self.music.track.as_ref(), session.track.as_ref());
-                let seeked = position_jumped(self.music.track.as_ref(), session.track.as_ref());
-                changed = !self.music.running
-                    || self.music.player_state != session.player_state
-                    || !same_track
-                    || seeked;
-
-                if !self.music.running {
-                    log(&format!("{}: session appeared", apple_music::DISPLAY_NAME));
-                }
-                self.music.running = true;
-                self.music.player_state = session.player_state;
-
-                if same_track {
-                    // The overwhelmingly common case: the same track, a moment
-                    // later. Only the position moved, and the three strings
-                    // already held are equal to the ones on offer — so cloning
-                    // the reading over them would allocate three times, several
-                    // times a second, to change nothing.
-                    if let (Some(held), Some(incoming)) =
-                        (self.music.track.as_mut(), session.track.as_ref())
-                    {
-                        held.adopt_playback_from(incoming);
-                    }
-                } else {
-                    self.music.track = session.track.clone();
-                    self.reset_catalog();
-                    track_changed = true;
-                }
+                let update = self.apply_session(Source::AppleMusic, session, now);
+                changed |= update.changed;
+                track_changed |= update.track_changed;
             }
-            None => {
-                if self.music.running {
-                    log(&format!("{}: session gone", apple_music::DISPLAY_NAME));
-                    changed = true;
+            None => changed |= self.clear_source(Source::AppleMusic),
+        }
+
+        if self.settings.youtube_music_enabled {
+            match snapshot.youtube_music.as_ref() {
+                Some(session) => {
+                    self.timers.cancel(Timer::YouTubeLoss);
+                    let update = self.apply_session(Source::YouTubeMusic, session, now);
+                    changed |= update.changed;
+                    track_changed |= update.track_changed;
                 }
-                self.music = MusicState::default();
-                self.timers.cancel(Timer::CatalogRetry);
+                // Not cleared yet: a track change reads as a plain video for a
+                // moment while the album catches up. See `LOSS_GRACE`.
+                None => {
+                    if self.youtube.running && !self.timers.is_armed(Timer::YouTubeLoss) {
+                        self.timers
+                            .arm_in(Timer::YouTubeLoss, youtube_music::LOSS_GRACE);
+                    }
+                }
             }
         }
 
@@ -548,20 +588,81 @@ impl App {
         // takes a network round trip. The request goes out here and the
         // presence is sent without them in the meantime, so a slow lookup never
         // delays the card.
-        self.request_missing_catalog(Instant::now());
+        for source in Source::ALL {
+            self.request_missing_catalog(source, now);
+        }
 
-        if !self.music.running {
+        self.reconcile(changed, track_changed);
+    }
+
+    /// Takes one source's session reading into its state, reporting whether
+    /// anything on display moved.
+    fn apply_session(&mut self, source: Source, session: &SessionState, now: Instant) -> Update {
+        let state = self.state(source);
+        let same_track = same_identity(state.track.as_ref(), session.track.as_ref());
+        let seeked = position_jumped(state.track.as_ref(), session.track.as_ref());
+        let appeared = !state.running;
+        let changed =
+            appeared || state.player_state != session.player_state || !same_track || seeked;
+
+        if appeared {
+            log(&format!("{}: session appeared", source.display_name()));
+        }
+        let state = self.state_mut(source);
+        state.running = true;
+        state.set_player_state(session.player_state, now);
+
+        if same_track {
+            // The overwhelmingly common case: the same track, a moment later.
+            // Only the position moved, and the three strings already held are
+            // equal to the ones on offer — so cloning the reading over them
+            // would allocate three times, several times a second, to change
+            // nothing.
+            if let (Some(held), Some(incoming)) = (state.track.as_mut(), session.track.as_ref()) {
+                held.adopt_playback_from(incoming);
+            }
+            return Update {
+                changed,
+                track_changed: false,
+            };
+        }
+        state.track = session.track.clone();
+        self.reset_catalog(source);
+        Update {
+            changed,
+            track_changed: true,
+        }
+    }
+
+    /// Forgets everything about a source whose session is gone. Reports whether
+    /// there was anything to forget.
+    fn clear_source(&mut self, source: Source) -> bool {
+        let state = self.state_mut(source);
+        let was_running = state.running;
+        *state = MusicState::default();
+        self.settle_catalog_retry();
+        if was_running {
+            log(&format!("{}: session gone", source.display_name()));
+        }
+        was_running
+    }
+
+    /// Brings the connection and the presence in line with what the sources are
+    /// doing now. Every path that can change either ends here, so there is one
+    /// place that decides when to connect, switch Applications, show, or stop.
+    fn reconcile(&mut self, changed: bool, track_changed: bool) {
+        let Some(desired) = self.desired_source() else {
             // Nothing left to report. The macOS build goes fully dormant here
             // rather than holding an idle Discord connection open.
             self.go_dormant();
             return;
-        }
+        };
+        self.ensure_connection(desired);
 
-        self.attempt_connect();
-
-        if self.music.is_displayable() != self.displaying {
-            self.set_displaying(self.music.is_displayable());
-        } else if changed && self.displaying {
+        let shown = select_source(&self.music, &self.youtube);
+        if shown != self.displayed {
+            self.set_displaying(shown);
+        } else if changed && shown.is_some() {
             // Skipping a track while paused counts as interacting with the
             // player, so a timed-out presence comes back and the clock restarts.
             if track_changed {
@@ -573,14 +674,13 @@ impl App {
         // An event that changes nothing on display needs nothing sent.
     }
 
-    /// Starts or stops showing something on Discord.
-    fn set_displaying(&mut self, displaying: bool) {
-        log(if displaying {
-            "now showing on Discord"
-        } else {
-            "nothing to show — clearing"
-        });
-        self.displaying = displaying;
+    /// Starts or stops showing something on Discord, or changes whose it is.
+    fn set_displaying(&mut self, displayed: Option<Source>) {
+        match displayed {
+            Some(source) => log(&format!("now showing {} on Discord", source.display_name())),
+            None => log("nothing to show — clearing"),
+        }
+        self.displayed = displayed;
         // The rows say what is on display, so this moves them.
         self.status_dirty = true;
         self.cancel_debounce();
@@ -589,18 +689,19 @@ impl App {
         self.push_activity();
     }
 
-    /// The player is gone: stop everything and go back to fully idle.
+    /// Nothing is running: stop everything and go back to fully idle.
     ///
     /// The only way into that state, so "stop one more thing" is a one-line
     /// change rather than an edit repeated at every call site — which is what
     /// it used to be, in two places that had drifted apart.
     fn go_dormant(&mut self) {
-        self.displaying = false;
+        self.displayed = None;
         self.cancel_pause_timer();
         self.cancel_reconnect();
         self.cancel_debounce();
         self.timers.cancel(Timer::CatalogRetry);
         self.timers.cancel(Timer::Handshake);
+        self.timers.cancel(Timer::YouTubeLoss);
         if !self.connection.is_disconnected() {
             log("no players left — disconnecting");
             self.connection.disconnect(true);
@@ -614,15 +715,16 @@ impl App {
     /// Called after every SMTC snapshot and whenever a retry falls due. The
     /// `catalog_requested_for` guard is what keeps SMTC's event rate from
     /// turning into a request rate.
-    fn request_missing_catalog(&mut self, now: Instant) {
-        if !self.music.running || self.music.catalog.is_some() {
+    fn request_missing_catalog(&mut self, source: Source, now: Instant) {
+        let state = self.state(source);
+        if !state.running || state.catalog.is_some() {
             return;
         }
         // A failed lookup is serving its cooling-off period.
-        if self.music.catalog_retry_at.is_some_and(|at| at > now) {
+        if state.catalog_retry_at.is_some_and(|at| at > now) {
             return;
         }
-        let Some(track) = self.music.track.as_ref() else {
+        let Some(track) = state.track.as_ref() else {
             return;
         };
         if track.name.is_empty() {
@@ -632,8 +734,7 @@ impl App {
         // that holds for the whole of a track the catalog had no answer
         // for, so it runs on every SMTC event and must not allocate to say
         // "already asked".
-        if self
-            .music
+        if state
             .catalog_requested_for
             .as_deref()
             .is_some_and(|requested| track.matches_identity(requested))
@@ -653,69 +754,93 @@ impl App {
         // silent, art-less card, and only this line tells them apart.
         log(&format!(
             "{}: looking up \"{}\" by \"{}\"",
-            apple_music::DISPLAY_NAME,
+            source.display_name(),
             request.name,
             request.artist
         ));
-        self.music.catalog_requested_for = Some(identity);
-        self.music.catalog_retry_at = None;
-        self.timers.cancel(Timer::CatalogRetry);
+        let state = self.state_mut(source);
+        state.catalog_requested_for = Some(identity);
+        state.catalog_retry_at = None;
+        self.settle_catalog_retry();
         self.catalog.request(request);
     }
 
     /// Applies whatever the lookup thread has finished. A late answer is only
-    /// used when the track it belongs to is still the one playing.
+    /// used by a source whose track is still the one it was asked about.
     fn drain_catalog(&mut self) {
         while let Some(resolved) = self.catalog.try_recv() {
-            let still_playing = self
-                .music
-                .track
-                .as_ref()
-                .is_some_and(|track| track.matches_identity(&resolved.key));
-            if !still_playing {
-                continue;
+            for source in Source::ALL {
+                let still_playing = self
+                    .state(source)
+                    .track
+                    .as_ref()
+                    .is_some_and(|track| track.matches_identity(&resolved.key));
+                if still_playing {
+                    self.apply_catalog_outcome(source, resolved.outcome.clone());
+                }
             }
+        }
+    }
 
-            let name = apple_music::DISPLAY_NAME;
-            let mut resend = false;
-            match resolved.outcome {
-                Outcome::Found(catalog) => {
-                    self.music.catalog = Some(catalog);
-                    self.music.catalog_retry_at = None;
-                    log(&format!("{name}: catalog resolved"));
-                    // The presence has already gone out without artwork, so
-                    // only a hit is worth the re-send.
-                    resend = self.displaying;
-                }
-                Outcome::Missing => {
-                    self.music.catalog = None;
-                    self.music.catalog_retry_at = None;
-                    log(&format!("{name}: catalog not found"));
-                }
-                Outcome::Failed => {
-                    // Not an answer. Clearing the guard lets the track be asked
-                    // about again once the cooling-off period is up, instead of
-                    // spending the rest of the song with no artwork.
-                    self.music.catalog_requested_for = None;
-                    self.music.catalog_retry_at = Some(Instant::now() + CATALOG_RETRY_DELAY);
-                    self.timers.arm_in(Timer::CatalogRetry, CATALOG_RETRY_DELAY);
-                    log(&format!(
-                        "{name}: catalog lookup failed — retrying in {}s",
-                        CATALOG_RETRY_DELAY.as_secs()
-                    ));
+    fn apply_catalog_outcome(&mut self, source: Source, outcome: Outcome) {
+        let name = source.display_name();
+        match outcome {
+            Outcome::Found(catalog) => {
+                let state = self.state_mut(source);
+                // The links are Apple Music's. They would send someone who was
+                // listening on YouTube Music to the wrong service, so only the
+                // artwork is borrowed from the catalog.
+                state.catalog = Some(match source {
+                    Source::AppleMusic => catalog,
+                    Source::YouTubeMusic => CatalogInfo {
+                        artwork_url: catalog.artwork_url,
+                        ..CatalogInfo::default()
+                    },
+                });
+                state.catalog_retry_at = None;
+                log(&format!("{name}: catalog resolved"));
+                // The presence has already gone out without artwork, so only a
+                // hit is worth the re-send.
+                if self.displayed == Some(source) {
+                    self.push_activity();
                 }
             }
-            if resend {
-                self.push_activity();
+            Outcome::Missing => {
+                let state = self.state_mut(source);
+                state.catalog = None;
+                state.catalog_retry_at = None;
+                log(&format!("{name}: catalog not found"));
+            }
+            Outcome::Failed => {
+                // Not an answer. Clearing the guard lets the track be asked
+                // about again once the cooling-off period is up, instead of
+                // spending the rest of the song with no artwork.
+                let state = self.state_mut(source);
+                state.catalog_requested_for = None;
+                state.catalog_retry_at = Some(Instant::now() + CATALOG_RETRY_DELAY);
+                self.timers.arm_in(Timer::CatalogRetry, CATALOG_RETRY_DELAY);
+                log(&format!(
+                    "{name}: catalog lookup failed — retrying in {}s",
+                    CATALOG_RETRY_DELAY.as_secs()
+                ));
             }
         }
     }
 
     /// Back to "nothing known about this track", with the pending retry — if
     /// any — dropped alongside it.
-    fn reset_catalog(&mut self) {
-        self.music.clear_catalog();
-        self.timers.cancel(Timer::CatalogRetry);
+    fn reset_catalog(&mut self, source: Source) {
+        self.state_mut(source).clear_catalog();
+        self.settle_catalog_retry();
+    }
+
+    /// Drops the shared retry timer once no source is waiting on it. There is
+    /// one timer for both, so cancelling it for one must not cost the other its
+    /// retry.
+    fn settle_catalog_retry(&mut self) {
+        if self.music.catalog_retry_at.is_none() && self.youtube.catalog_retry_at.is_none() {
+            self.timers.cancel(Timer::CatalogRetry);
+        }
     }
 
     // MARK: - Updates
@@ -782,7 +907,7 @@ impl App {
     // MARK: - Activity
 
     fn push_activity(&mut self) {
-        if !self.music.running {
+        if self.desired_source().is_none() {
             return;
         }
         self.pending_activity = Some(self.build_activity());
@@ -795,17 +920,17 @@ impl App {
     }
 
     fn build_activity(&self) -> Option<Map<String, Value>> {
-        if !self.displaying {
-            return None;
-        }
-        let track = self.music.track.as_ref()?;
-        if !self.should_show_activity(self.music.player_state) {
+        let source = self.displayed?;
+        let state = self.state(source);
+        let track = state.track.as_ref()?;
+        if !self.should_show_activity(state.player_state) {
             return None;
         }
         Some(activity_builder::build(
+            source,
             track,
-            self.music.player_state,
-            self.music.catalog.as_ref(),
+            state.player_state,
+            state.catalog.as_ref(),
             &self.settings,
             SystemTime::now(),
         ))
@@ -836,7 +961,7 @@ impl App {
     // MARK: - Pause timeout
 
     fn update_pause_timer(&mut self) {
-        if !self.displaying || self.music.player_state != PlayerState::Paused {
+        if !self.displayed_is_paused() {
             self.cancel_pause_timer();
             return;
         }
@@ -859,13 +984,33 @@ impl App {
 
     // MARK: - Connection
 
+    /// Makes the live connection the one `source` needs, then connects if there
+    /// is none. Discord names the presence after the Application behind the
+    /// connection, so showing a different source means a different connection.
+    fn ensure_connection(&mut self, source: Source) {
+        if !self.connection.is_disconnected()
+            && self.connection.client_id() != Some(source.client_id())
+        {
+            log(&format!("switching to {}…", source.display_name()));
+            // Clears the old Application's presence on the way out. A deliberate
+            // switch is not a failure, so the backoff starts over too.
+            self.connection.disconnect(true);
+            self.timers.cancel(Timer::Handshake);
+            self.cancel_reconnect();
+        }
+        self.attempt_connect();
+    }
+
     fn attempt_connect(&mut self) {
-        if !self.music.running || !self.connection.is_disconnected() {
+        let Some(source) = self.desired_source() else {
+            return;
+        };
+        if !self.connection.is_disconnected() {
             return;
         }
-        match self.connection.connect() {
+        match self.connection.connect(source) {
             Ok(()) => {
-                log(&format!("connecting as {}…", apple_music::DISPLAY_NAME));
+                log(&format!("connecting as {}…", source.display_name()));
                 self.timers.arm_in(Timer::Handshake, HANDSHAKE_TIMEOUT);
             }
             Err(e) => {
@@ -877,7 +1022,7 @@ impl App {
 
     fn schedule_reconnect(&mut self) {
         self.timers.cancel(Timer::Handshake);
-        if !self.music.running {
+        if self.desired_source().is_none() {
             return;
         }
         let delay = self.connection.next_backoff();
@@ -919,10 +1064,7 @@ impl App {
             self.flush_activity();
         }
 
-        if self.timers.take_if_due(Timer::PauseHide, now)
-            && self.displaying
-            && self.music.player_state == PlayerState::Paused
-        {
+        if self.timers.take_if_due(Timer::PauseHide, now) && self.displayed_is_paused() {
             log("paused long enough — hiding presence");
             self.paused_timed_out = true;
             self.push_activity();
@@ -952,8 +1094,16 @@ impl App {
         // Consumed whether or not it leads to a request, so a deadline that is
         // already past can never keep the loop spinning.
         if self.timers.take_if_due(Timer::CatalogRetry, now) {
-            self.music.catalog_retry_at = None;
-            self.request_missing_catalog(now);
+            for source in Source::ALL {
+                self.state_mut(source).catalog_retry_at = None;
+                self.request_missing_catalog(source, now);
+            }
+        }
+
+        if self.timers.take_if_due(Timer::YouTubeLoss, now) && self.youtube.running {
+            self.clear_source(Source::YouTubeMusic);
+            self.status_dirty = true;
+            self.reconcile(true, false);
         }
     }
 
@@ -999,6 +1149,7 @@ impl App {
     fn status_input(&self, conn: ConnState) -> status_lines::Input<'_> {
         status_lines::Input {
             music: &self.music,
+            youtube_music: self.settings.youtube_music_enabled.then_some(&self.youtube),
             discord_state: conn,
             language: self.settings.language,
         }

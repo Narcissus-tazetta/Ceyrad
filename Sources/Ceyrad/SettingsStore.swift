@@ -58,6 +58,9 @@ enum LinkType: String, CaseIterable {
         case .disabled: return ""
         }
     }
+
+    /// YouTube Music では曲ページが YouTube Music のものになるので、曲ボタンの既定ラベルが変わる。
+    static let youtubeMusicSongLabel = "Play on YouTube Music"
 }
 
 /// メンバーリスト等に出る簡易バッジ「〜を再生中」に何を表示するか。
@@ -83,8 +86,19 @@ final class SettingsStore {
     /// このアプリ専用のDiscord Application ID（Application名: "Apple Music"）。
     /// ユーザーが変更する必要はないため固定値とする。
     static let discordClientId = "1525381518258606130"
+    /// YouTube Music 用の Discord Application ID（Application名: "YouTube Music"）。
+    /// 仮の値。Discord Developer Portal で "YouTube Music" という名前の Application を作り、その ID に差し替える。
+    /// 差し替えるまで、YouTube Music を検知しても Discord は接続を拒否する。
+    static let youtubeMusicClientId = "0000000000000000000"
     /// Discord RPCの制限。ラベルはここで切ってから送る。
     static let maxLabelCharacters = 32
+
+    static func clientId(for source: MusicSource) -> String {
+        switch source {
+        case .appleMusic: return discordClientId
+        case .youtubeMusic: return youtubeMusicClientId
+        }
+    }
 
     private let defaults: UserDefaults
 
@@ -154,6 +168,13 @@ final class SettingsStore {
     var pauseHideMinutes: Int {
         get { defaults.object(forKey: "pauseHideMinutes") as? Int ?? 5 }
         set { defaults.set(newValue, forKey: "pauseHideMinutes") }
+    }
+
+    /// ブラウザで再生中の YouTube Music を検知するか。
+    /// 検知には perl の子プロセスを常駐させるので、既定はオフ。
+    var youtubeMusicEnabled: Bool {
+        get { defaults.bool(forKey: "youtubeMusicEnabled") }
+        set { defaults.set(newValue, forKey: "youtubeMusicEnabled") }
     }
 
     /// 設定画面（メニュー）の表示言語。Discord関連の文言には影響しない。

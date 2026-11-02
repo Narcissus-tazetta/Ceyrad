@@ -414,6 +414,131 @@
           "end": 1700000000000
         }
       }
+    },
+    {
+      "name": "youtube music: the song button carries the tab url and its own default label",
+      "source": "youtubeMusic",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 50,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": {
+        "songURL": "https://music.youtube.com/watch?v=abc123",
+        "artistURL": "https://music.apple.com/artist",
+        "albumURL": "https://music.apple.com/album",
+        "artworkURL": "https://example.com/art/512x512bb.jpg"
+      },
+      "settings": {},
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "assets": {
+          "large_image": "https://example.com/art/512x512bb.jpg",
+          "large_text": "Album"
+        },
+        "timestamps": {
+          "start": 1699999950000,
+          "end": 1700000150000
+        },
+        "buttons": [
+          {
+            "label": "Play on YouTube Music",
+            "url": "https://music.youtube.com/watch?v=abc123"
+          },
+          {
+            "label": "About This App",
+            "url": "https://github.com/Narcissus-tazetta/Ceyrad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "youtube music: artist and album buttons are dropped because those pages are Apple Music's",
+      "source": "youtubeMusic",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 50,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": {
+        "songURL": "https://music.youtube.com/watch?v=abc123",
+        "artistURL": "https://music.apple.com/artist",
+        "albumURL": "https://music.apple.com/album",
+        "artworkURL": "https://example.com/art/512x512bb.jpg"
+      },
+      "settings": {
+        "button1Type": "artist",
+        "button2Type": "album"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "assets": {
+          "large_image": "https://example.com/art/512x512bb.jpg",
+          "large_text": "Album"
+        },
+        "timestamps": {
+          "start": 1699999950000,
+          "end": 1700000150000
+        }
+      }
+    },
+    {
+      "name": "youtube music: a customised song label is kept",
+      "source": "youtubeMusic",
+      "track": {
+        "name": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "durationSec": 200,
+        "positionSec": 50,
+        "positionSampledAtUnix": 1700000000
+      },
+      "playerState": "playing",
+      "catalog": {
+        "songURL": "https://music.youtube.com/watch?v=abc123",
+        "artworkURL": "https://example.com/art/512x512bb.jpg"
+      },
+      "settings": {
+        "button1Label": "Listen now",
+        "button2Type": "disabled"
+      },
+      "nowUnix": 1700000000,
+      "expected": {
+        "type": 2,
+        "details": "Song",
+        "state": "Artist",
+        "status_display_type": 1,
+        "assets": {
+          "large_image": "https://example.com/art/512x512bb.jpg",
+          "large_text": "Album"
+        },
+        "timestamps": {
+          "start": 1699999950000,
+          "end": 1700000150000
+        },
+        "buttons": [
+          {
+            "label": "Listen now",
+            "url": "https://music.youtube.com/watch?v=abc123"
+          }
+        ]
+      }
     }
   ]
 }

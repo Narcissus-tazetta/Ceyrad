@@ -32,6 +32,7 @@ fn stopped() -> MusicState {
 fn input(music: &MusicState) -> Input<'_> {
     Input {
         music,
+        youtube_music: None,
         discord_state: ConnState::Disconnected,
         language: AppLanguage::En,
     }
@@ -108,4 +109,52 @@ fn japanese_translates_the_source_row_but_never_the_discord_row() {
     assert_eq!(rows[0], "Apple Music: 停止中");
     // Discord-facing wording stays English on both platforms.
     assert_eq!(rows[1], "Discord: Connected");
+}
+
+#[test]
+fn the_youtube_music_row_appears_only_when_detection_is_on() {
+    let am = playing("Song", "Artist");
+    assert_eq!(lines(&input(&am)).len(), 2, "off: no extra row");
+
+    let yt = playing("Track", "Singer");
+    let mut i = input(&am);
+    i.youtube_music = Some(&yt);
+    let rows = lines(&i);
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[1], "♪ YouTube Music: Track — Singer");
+}
+
+#[test]
+fn an_absent_browser_session_is_not_detected_rather_than_not_running() {
+    let am = playing("Song", "Artist");
+    let yt = MusicState::default();
+    let mut i = input(&am);
+    i.youtube_music = Some(&yt);
+    assert_eq!(lines(&i)[1], "YouTube Music: Not Detected");
+
+    i.language = AppLanguage::Ja;
+    assert_eq!(lines(&i)[1], "YouTube Music: 未検出");
+}
+
+#[test]
+fn a_paused_or_stopped_youtube_music_session_is_reported_as_such() {
+    let am = MusicState::default();
+    let yt = paused("Track", "Singer");
+    let mut i = input(&am);
+    i.youtube_music = Some(&yt);
+    assert_eq!(lines(&i)[1], "⏸ YouTube Music: Track — Singer");
+
+    let yt = stopped();
+    i.youtube_music = Some(&yt);
+    assert_eq!(lines(&i)[1], "YouTube Music: Stopped");
+}
+
+#[test]
+fn the_discord_row_is_not_idle_when_only_youtube_music_is_up() {
+    let am = MusicState::default();
+    let yt = playing("Track", "Singer");
+    let mut i = input(&am);
+    i.youtube_music = Some(&yt);
+    i.discord_state = ConnState::Connected;
+    assert_eq!(lines(&i).last().unwrap(), "Discord: Connected");
 }

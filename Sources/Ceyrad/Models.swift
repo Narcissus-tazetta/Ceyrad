@@ -51,11 +51,23 @@ enum CatalogOutcome: Equatable {
     case failed
 }
 
-/// Apple Musicの現在状態。プレイヤーは1つなので、これがアプリの音楽側の全状態になる。
+/// Discordに表示できる音楽ソース。Discord側の表示名はApplication（client ID）ごとに決まるため、
+/// ソースが変わると接続し直す。
+enum MusicSource {
+    case appleMusic
+    case youtubeMusic
+}
+
+/// 1つのソースの現在状態。
 struct MusicState {
+    /// Apple Music: アプリが起動している。YouTube Music: 検知が有効で、取得元が動いている。
     var running = false
     var playerState: PlayerState = .stopped
     var track: TrackInfo?
+    /// `.playing` に遷移した時刻。複数のソースが同時に鳴っているとき、後から始めた方を選ぶ根拠。
+    var playingSince: Date?
+    /// ソース自身の曲ページ（YouTube Musicではブラウザのタブから得たURL）。
+    var pageURL: String?
     var catalog: CatalogInfo?
     /// カタログ照会をすでに投げた曲のidentity。通知が続いても同じ曲を訊き直さないための番人。
     var catalogRequestedFor: String?
@@ -74,5 +86,30 @@ struct MusicState {
         catalog = nil
         catalogRequestedFor = nil
         catalogRetryAt = nil
+    }
+}
+
+/// どのソースをDiscordに出すか。
+///
+/// 再生中は一時停止より優先し、同じ状態どうしなら後から再生を始めた方を選ぶ。
+/// 状態だけから決まる純関数にして、切り替えの規則をテストで固定する。
+enum SourceSelector {
+    static func select(appleMusic: MusicState, youtubeMusic: MusicState) -> MusicSource? {
+        switch (appleMusic.isDisplayable, youtubeMusic.isDisplayable) {
+        case (false, false): return nil
+        case (true, false): return .appleMusic
+        case (false, true): return .youtubeMusic
+        case (true, true): break
+        }
+
+        let appleIsPlaying = appleMusic.playerState == .playing
+        if appleIsPlaying != (youtubeMusic.playerState == .playing) {
+            return appleIsPlaying ? .appleMusic : .youtubeMusic
+        }
+        switch (appleMusic.playingSince, youtubeMusic.playingSince) {
+        case (let apple?, let youtube?): return youtube > apple ? .youtubeMusic : .appleMusic
+        case (nil, _?): return .youtubeMusic
+        default: return .appleMusic
+        }
     }
 }

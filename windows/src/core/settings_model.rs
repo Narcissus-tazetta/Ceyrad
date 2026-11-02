@@ -145,6 +145,9 @@ pub struct Settings {
     pub badge_label: BadgeLabelType,
     pub pause_hide_minutes: i32,
     pub language: AppLanguage,
+    /// Whether browser media sessions are watched for YouTube Music. Off by
+    /// default: nothing about browsers is subscribed to until the user asks.
+    pub youtube_music_enabled: bool,
 }
 
 impl Default for Settings {
@@ -159,6 +162,7 @@ impl Default for Settings {
             badge_label: BadgeLabelType::Artist,
             pause_hide_minutes: 5,
             language: AppLanguage::En,
+            youtube_music_enabled: false,
         }
     }
 }

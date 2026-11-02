@@ -7,6 +7,7 @@ Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に�
 - 曲名・アーティスト・アルバムアート・再生プログレスバーを「〜を再生中」として表示
 - ボタン最大2個（曲/アーティスト/アルバムページ、カスタムURL、リポジトリ）
 - **Apple Musicが起動していないときは何もしない**（ポーリングなし・完全イベント駆動）
+- 任意で、ブラウザで再生中のYouTube Musicも表示できる。ブラウザ拡張は不要（既定はオフ。[YouTube Music（ブラウザ）](#youtube-musicブラウザ)を参照）
 
 ## 動作環境
 
@@ -39,9 +40,22 @@ Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に�
 | Status Badge | メンバーリストやDMサイドバー等の簡易バッジ「〜を再生中」に表示する内容: アプリ名 / アーティスト名 / 曲名（既定: アーティスト名） |
 | When Paused | 一時停止時の挙動: 表示継続 / 即消す / 1・3・5・10分後に消す（既定: 5分後） |
 | Launch at Login | ログイン時にCeyradを自動起動する（クリックでオン/オフ切り替え） |
+| Detect YouTube Music (browser) | ブラウザで再生中のYouTube Musicを表示する（既定: オフ）。[YouTube Music（ブラウザ）](#youtube-musicブラウザ)を参照 |
 | Language | メニュー（この設定画面）の表示言語を English / 日本語 で切り替える。Discord側に表示される文言（接続ステータスやボタンラベルなど）は対象外で常に英語のまま |
 | Reconnect to Discord | Discordへの接続をやり直す |
 | Check for Updates… | [Sparkle](#自動更新sparkle)で最新版を確認・インストール |
+
+## YouTube Music（ブラウザ）
+
+メニューの「YouTube Musicを検知（ブラウザ）」をオンにすると、ブラウザで再生中のYouTube Musicも「YouTube Musicを再生中」として表示する。ブラウザ拡張は不要。
+
+- システム全体の「いま再生中」の情報を読む。macOS 15.4以降はシステムの`/usr/bin/perl`だけが読めるため、[mediaremote-adapter](https://github.com/ungive/mediaremote-adapter)（BSD-3-Clause）を同梱し、`perl`に読み込ませている。オンの間は`perl`が1プロセス常駐する（約6MB・CPUはほぼ0%）。オフの間は何も追加で動かない。
+- 再生元が**ブラウザ**で、そのブラウザに`music.youtube.com`の**タブがあり**、**かつ**曲にアルバム名が付いているか、曲名がそのタブのタイトルと一致するときにYouTube Musicとみなす。通常のYouTube動画は表示しない。
+- ブラウザのタブを読むため、そのブラウザへのオートメーション権限が必要（「システム設定 > プライバシーとセキュリティ > オートメーション」）。未許可のときはメニューに「Browser Control: Not Authorized ⚠️」と出る。
+- 対応ブラウザ: Chrome（動作確認済み）、Chrome Beta/Dev/Canary・Safari・Edge・Brave・Arc・Vivaldi（同じ仕組み・未確認）。Firefoxはタブを読めないため非対応。
+- Apple MusicとYouTube Musicは同じステータスを共有する。後から再生を始めた方を表示し、再生中は一時停止より優先する。表示するソースに合わせてDiscordへの接続も切り替わるため、2つは別の名前で表示される。
+- 曲ボタンは、YouTube Musicのタブが曲のページ（`/watch`）を開いているときだけそのURLになり、そうでなければ非表示。アーティスト/アルバムのボタンはYouTube Musicでは出ない。アートワークはApple Musicと同じiTunes Search APIで引き、曲が見つからなければ出ない。
+- `perl`が「いま再生中」を読めないとき（Appleがこの経路を塞いだ場合や、`Ceyrad.app`ではなく素の実行ファイルで起動した場合）は、メニューに理由つきで「YouTube Music: Unavailable ⚠️」と出る。
 
 ## ログイン時に自動起動（任意）
 
@@ -137,7 +151,7 @@ launchctl load ~/Library/LaunchAgents/local.ceyrad.plist
 
 ### Discord Application ID
 
-Discordに接続するためのApplication IDはこのアプリ専用のものを [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) の`SettingsStore.discordClientId`に固定で埋め込んである。「〜を再生中」の名前はApplication名で決まる（名前 **Apple Music**）。フォークして自分用に使う場合は、[Discord Developer Portal](https://discord.com/developers/applications) でその名前のApplicationを作り、そのApplication IDに書き換える。
+Discordに接続するためのApplication IDはこのアプリ専用のものを [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) に固定で埋め込んである（Apple Musicは`SettingsStore.discordClientId`、YouTube Musicは`SettingsStore.youtubeMusicClientId`）。「〜を再生中」の名前はApplication名で決まる（名前 **Apple Music** と **YouTube Music**）。フォークして自分用に使う場合は、[Discord Developer Portal](https://discord.com/developers/applications) でその名前のApplicationを作り、そのApplication IDに書き換える。
 
 ### テスト
 

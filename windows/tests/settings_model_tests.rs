@@ -212,3 +212,8 @@ fn every_language_has_a_name_of_its_own() {
     assert_eq!(AppLanguage::En.display_name(), "English");
     assert_eq!(AppLanguage::Ja.display_name(), "日本語");
 }
+
+#[test]
+fn youtube_music_detection_is_off_until_asked_for() {
+    assert!(!Settings::default().youtube_music_enabled);
+}

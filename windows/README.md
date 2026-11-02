@@ -172,6 +172,14 @@ CEYRAD_AUMID_APPLE_MUSIC="AppleInc.AppleMusicWin" cargo run --bin ceyrad_dev
 If you find the real id for a stock install, it belongs in
 `src/core/aumid.rs` rather than in an environment variable.
 
+### YouTube Music in a browser
+
+**Detect YouTube Music (browser)** in the menu (off by default) also shows YouTube Music playing in a browser. With it off, browser sessions are not subscribed to at all, so the cost above does not change.
+
+A browser session counts as YouTube Music when the track reports an album. Windows has no way to read a browser's tabs, so unlike macOS there is no tab check, and a track without an album is not recognised. Plain YouTube videos report no album and are not shown. Whether SMTC passes a browser's album through has not been verified on a real machine. Artwork comes from the iTunes lookup and there are no buttons (the song page is not known).
+
+Browsers are recognised by their AUMID. Only `Chrome` and `Chromium` family ids are built in, and that is unverified on a real machine; for anything else, copy the id from the `smtc: ignoring unrecognised session` log line into `CEYRAD_AUMID_BROWSER` (comma-separated, prefixes work).
+
 ### Artwork and links
 
 SMTC reports a title, an artist and a position, but no URL — and its thumbnail

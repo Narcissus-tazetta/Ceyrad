@@ -1,4 +1,4 @@
-use ceyrad::core::aumid::{is_apple_music, AumidOverrides};
+use ceyrad::core::aumid::{is_apple_music, is_browser, AumidOverrides};
 
 fn none() -> AumidOverrides {
     AumidOverrides::default()
@@ -49,6 +49,7 @@ fn generic_names_are_not_claimed() {
 fn an_override_adds_an_unknown_id() {
     let overrides = AumidOverrides {
         apple_music: vec!["F0DC299D809B9700".into()],
+        ..Default::default()
     };
     assert!(is_apple_music("F0DC299D809B9700", &overrides));
 }
@@ -57,6 +58,7 @@ fn an_override_adds_an_unknown_id() {
 fn an_override_may_be_a_prefix() {
     let overrides = AumidOverrides {
         apple_music: vec!["MyCorp.Player".into()],
+        ..Default::default()
     };
     assert!(is_apple_music("MyCorp.Player_abc123!App", &overrides));
 }
@@ -68,6 +70,7 @@ fn an_override_may_be_a_prefix() {
 fn a_non_ascii_override_prefix_matches_whole_characters_only() {
     let overrides = AumidOverrides {
         apple_music: vec!["日本語".into()],
+        ..Default::default()
     };
     assert!(is_apple_music("日本語版.exe", &overrides));
     // Shares its first two characters — six of the nine bytes — with the
@@ -81,6 +84,56 @@ fn a_non_ascii_override_prefix_matches_whole_characters_only() {
 fn an_empty_override_entry_matches_nothing() {
     let overrides = AumidOverrides {
         apple_music: vec![String::new(), "  ".into()],
+        ..Default::default()
     };
     assert!(!is_apple_music("anything.exe", &overrides));
+}
+
+#[test]
+fn chromium_family_ids_are_browsers() {
+    for id in [
+        "Chrome",
+        "Chrome.ECAK3V",
+        "ChromeBeta",
+        "chrome.exe",
+        "Chromium",
+    ] {
+        assert!(is_browser(id, &none()), "{id} should match");
+    }
+}
+
+#[test]
+fn an_opaque_id_is_not_a_browser_until_it_is_overridden() {
+    // The id seen on a real machine; nothing about its shape says "browser".
+    assert!(!is_browser("F0DC299D809B9700", &none()));
+    assert!(!is_browser("", &none()));
+    assert!(!is_browser("   ", &none()));
+
+    let overrides = AumidOverrides {
+        browsers: vec!["F0DC299D809B9700".into()],
+        ..Default::default()
+    };
+    assert!(is_browser("F0DC299D809B9700", &overrides));
+    assert!(!is_apple_music("F0DC299D809B9700", &overrides));
+}
+
+#[test]
+fn a_music_app_is_not_a_browser() {
+    assert!(!is_browser(
+        "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App",
+        &none()
+    ));
+    assert!(!is_browser("spotify.exe", &none()));
+}
+
+#[test]
+fn overrides_for_one_kind_do_not_leak_into_the_other() {
+    let overrides = AumidOverrides {
+        apple_music: vec!["MyCorp.Player".into()],
+        browsers: vec!["MyCorp.Browser".into()],
+    };
+    assert!(is_apple_music("MyCorp.Player", &overrides));
+    assert!(!is_browser("MyCorp.Player", &overrides));
+    assert!(is_browser("MyCorp.Browser", &overrides));
+    assert!(!is_apple_music("MyCorp.Browser", &overrides));
 }

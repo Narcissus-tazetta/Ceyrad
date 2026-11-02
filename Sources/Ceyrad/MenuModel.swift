@@ -13,6 +13,7 @@ enum MenuAction: Equatable {
     case setPauseHideMinutes(Int)
     case setLanguage(AppLanguage)
     case toggleLaunchAtLogin
+    case toggleYouTubeMusic
     case reconnect
     case checkForUpdates
     case quit
@@ -75,6 +76,13 @@ enum MenuModel {
                 label: t(language, "Launch at Login", "ログイン時に自動起動"),
                 action: .toggleLaunchAtLogin,
                 checked: input.launchAtLogin
+            )
+        )
+        rows.append(
+            .choice(
+                label: t(language, "Detect YouTube Music (browser)", "YouTube Musicを検知（ブラウザ）"),
+                action: .toggleYouTubeMusic,
+                checked: settings.youtubeMusicEnabled
             )
         )
         rows.append(.separator)

@@ -33,6 +33,7 @@ pub enum MenuAction {
     SetBadgeLabel(BadgeLabelType),
     SetPauseHideMinutes(i32),
     SetLanguage(AppLanguage),
+    ToggleYouTubeMusic,
     ToggleLaunchAtLogin,
     Reconnect,
     CheckForUpdates,
@@ -99,6 +100,15 @@ pub fn build_menu(input: &MenuInput) -> Vec<MenuRow> {
     rows.push(badge_submenu(input.settings, language));
     rows.push(pause_submenu(input.settings, language));
     rows.push(language_submenu(language));
+    rows.push(MenuRow::Choice {
+        label: t(
+            language,
+            "Detect YouTube Music (browser)",
+            "YouTube Musicを検知（ブラウザ）",
+        ),
+        action: MenuAction::ToggleYouTubeMusic,
+        checked: input.settings.youtube_music_enabled,
+    });
     rows.push(MenuRow::Choice {
         label: t(language, "Launch at Login", "ログイン時に自動起動"),
         action: MenuAction::ToggleLaunchAtLogin,
@@ -266,6 +276,7 @@ pub fn action_id(action: MenuAction) -> String {
         MenuAction::SetBadgeLabel(badge) => format!("badge.{}", badge_slug(badge)),
         MenuAction::SetPauseHideMinutes(minutes) => format!("pause.{minutes}"),
         MenuAction::SetLanguage(language) => format!("language.{}", language_slug(language)),
+        MenuAction::ToggleYouTubeMusic => "youtube_music".into(),
         MenuAction::ToggleLaunchAtLogin => "launch_at_login".into(),
         MenuAction::Reconnect => "reconnect".into(),
         MenuAction::CheckForUpdates => "update.check".into(),
@@ -278,6 +289,7 @@ pub fn parse_action_id(id: &str) -> Option<MenuAction> {
     match id {
         "url.custom" => return Some(MenuAction::EditCustomUrl),
         "url.repository" => return Some(MenuAction::EditRepositoryUrl),
+        "youtube_music" => return Some(MenuAction::ToggleYouTubeMusic),
         "launch_at_login" => return Some(MenuAction::ToggleLaunchAtLogin),
         "reconnect" => return Some(MenuAction::Reconnect),
         "update.check" => return Some(MenuAction::CheckForUpdates),
@@ -372,6 +384,7 @@ mod tests {
         build_menu(&MenuInput {
             status: status_lines::Input {
                 music: source,
+                youtube_music: None,
                 discord_state: ConnState::Disconnected,
                 language: settings.language,
             },
@@ -432,6 +445,7 @@ mod tests {
         let rows = menu(&settings, &source);
         let expected = status_lines::lines(&status_lines::Input {
             music: &source,
+            youtube_music: None,
             discord_state: ConnState::Disconnected,
             language: AppLanguage::En,
         });
@@ -662,6 +676,44 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    fn youtube_toggle(rows: &[MenuRow]) -> Option<(&str, bool)> {
+        rows.iter().find_map(|row| match row {
+            MenuRow::Choice {
+                label,
+                action: MenuAction::ToggleYouTubeMusic,
+                checked,
+            } => Some((label.as_str(), *checked)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn youtube_music_detection_starts_unchecked_and_follows_the_setting() {
+        assert_eq!(
+            youtube_toggle(&default_menu()),
+            Some(("Detect YouTube Music (browser)", false))
+        );
+
+        let mut settings = Settings::default();
+        settings.youtube_music_enabled = true;
+        let rows = menu(&settings, &MusicState::default());
+        assert_eq!(
+            youtube_toggle(&rows).map(|(_, checked)| checked),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn the_youtube_music_toggle_is_translated() {
+        let mut settings = Settings::default();
+        settings.language = AppLanguage::Ja;
+        let rows = menu(&settings, &MusicState::default());
+        assert_eq!(
+            youtube_toggle(&rows),
+            Some(("YouTube Musicを検知（ブラウザ）", false))
+        );
     }
 
     #[test]

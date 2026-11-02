@@ -6,6 +6,7 @@ set -e
 cd "$(dirname "$0")"
 
 swift build -c release
+./scripts/build-mediaremote-adapter.sh
 
 APP="Ceyrad.app"
 rm -rf "$APP"
@@ -20,6 +21,15 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # rpathにそこを追加する（SPMが付与する@loader_pathはMacOSディレクトリ基準のため別途必要）。
 cp -R .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Ceyrad"
+
+# YouTube Music の検知に使う mediaremote-adapter。リンクはせず、/usr/bin/perl が読み込む
+# （macOS 15.4 以降、MediaRemote はシステムの perl にしか entitlement がない）。
+# フレームワークは既にad-hoc署名済みなのでコピーのままでよい。
+ADAPTER=.build/mediaremote-adapter
+cp -R "$ADAPTER/build/MediaRemoteAdapter.framework" "$APP/Contents/Frameworks/MediaRemoteAdapter.framework"
+cp "$ADAPTER/bin/mediaremote-adapter.pl" "$APP/Contents/Resources/mediaremote-adapter.pl"
+cp "$ADAPTER/build/MediaRemoteAdapterTestClient" "$APP/Contents/Resources/MediaRemoteAdapterTestClient"
+cp "$ADAPTER/LICENSE" "$APP/Contents/Resources/MediaRemoteAdapter-LICENSE.txt"
 
 # ad-hoc署名。Apple IDの開発証明書があればそれを使うと、
 # 再ビルドしてもTCCの許可が維持されやすい。

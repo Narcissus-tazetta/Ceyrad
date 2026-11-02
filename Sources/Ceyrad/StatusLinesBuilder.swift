@@ -5,6 +5,11 @@ enum StatusLinesBuilder {
     struct Input {
         var music = MusicState()
         var musicNotAuthorized = false
+        var youtube = MusicState()
+        var youtubeEnabled = false
+        /// 検知が有効なのに取得元が使えないときの理由。
+        var youtubeUnavailable: String?
+        var browserNotAuthorized = false
         var discordState: DiscordRPCClient.ConnState = .disconnected
         var language: AppLanguage = .en
     }
@@ -12,6 +17,7 @@ enum StatusLinesBuilder {
     static func lines(_ input: Input) -> [String] {
         var lines = [sourceLine(input)]
         lines.append(contentsOf: automationLines(input))
+        lines.append(contentsOf: youtubeLines(input))
         lines.append(discordLine(input))
         return lines
     }
@@ -44,9 +50,41 @@ enum StatusLinesBuilder {
         ]
     }
 
+    /// 検知がオフのあいだは何も出さない（機能そのものを見せない）。
+    private static func youtubeLines(_ input: Input) -> [String] {
+        guard input.youtubeEnabled else { return [] }
+        let name = YouTubeMusic.displayName
+        let language = input.language
+        var lines: [String] = []
+
+        if let reason = input.youtubeUnavailable {
+            lines.append(t(language, "\(name): Unavailable ⚠️", "\(name): 利用不可 ⚠️"))
+            lines.append("(\(reason))")
+        } else if !input.youtube.running {
+            lines.append(t(language, "\(name): Starting…", "\(name): 起動中…"))
+        } else if input.youtube.track != nil {
+            let glyph = input.youtube.playerState == .paused ? "⏸" : "♪"
+            lines.append("\(glyph) \(name): \(trackLine(input.youtube.track))")
+        } else {
+            lines.append(t(language, "\(name): Waiting for playback", "\(name): 再生待ち"))
+        }
+
+        if input.browserNotAuthorized {
+            lines.append(t(language, "Browser Control: Not Authorized ⚠️", "ブラウザの操作: 未許可 ⚠️"))
+            lines.append(
+                t(
+                    language,
+                    "(System Settings > Privacy > Automation)",
+                    "(システム設定 > プライバシーとセキュリティ > オートメーション)"
+                )
+            )
+        }
+        return lines
+    }
+
     /// Discordに関する文言は常に英語。Discord側の表記と揃えるため翻訳しない。
     private static func discordLine(_ input: Input) -> String {
-        guard input.music.running else {
+        guard input.music.running || input.youtube.isDisplayable else {
             return "Discord: Idle (connects when a player starts)"
         }
         switch input.discordState {

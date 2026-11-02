@@ -72,4 +72,61 @@ final class StatusLinesBuilderTests: XCTestCase {
             "Apple Music: 未起動"
         )
     }
+    // MARK: - YouTube Music
+
+    private func youtubeInput(
+        enabled: Bool = true, running: Bool = true, unavailable: String? = nil,
+        playerState: PlayerState = .playing,
+        track: TrackInfo? = TrackInfo(name: "pupa", artist: "natori", album: "pupa"),
+        browserNotAuthorized: Bool = false
+    ) -> StatusLinesBuilder.Input {
+        var youtube = MusicState()
+        youtube.running = running
+        youtube.playerState = playerState
+        youtube.track = track
+        return StatusLinesBuilder.Input(
+            youtube: youtube, youtubeEnabled: enabled, youtubeUnavailable: unavailable,
+            browserNotAuthorized: browserNotAuthorized
+        )
+    }
+
+    /// 検知がオフなら、機能の存在そのものをメニューに出さない。
+    func testDisabledYouTubeMusicAddsNoLines() {
+        let off = StatusLinesBuilder.lines(youtubeInput(enabled: false))
+        XCTAssertFalse(off.contains { $0.contains("YouTube Music") })
+    }
+
+    func testYouTubeMusicStates() {
+        XCTAssertTrue(
+            StatusLinesBuilder.lines(youtubeInput()).contains("♪ YouTube Music: pupa — natori"))
+        XCTAssertTrue(
+            StatusLinesBuilder.lines(youtubeInput(playerState: .paused))
+                .contains("⏸ YouTube Music: pupa — natori"))
+        XCTAssertTrue(
+            StatusLinesBuilder.lines(youtubeInput(track: nil))
+                .contains("YouTube Music: Waiting for playback"))
+        XCTAssertTrue(
+            StatusLinesBuilder.lines(youtubeInput(running: false))
+                .contains("YouTube Music: Starting…"))
+    }
+
+    /// 使えない理由は黙って落とさず、メニューに残す。
+    func testUnavailableYouTubeMusicSaysWhy() {
+        let lines = StatusLinesBuilder.lines(
+            youtubeInput(running: false, unavailable: "the adapter is not bundled"))
+        XCTAssertTrue(lines.contains("YouTube Music: Unavailable ⚠️"))
+        XCTAssertTrue(lines.contains("(the adapter is not bundled)"))
+    }
+
+    func testBrowserAuthorizationWarning() {
+        let lines = StatusLinesBuilder.lines(youtubeInput(browserNotAuthorized: true))
+        XCTAssertTrue(lines.contains("Browser Control: Not Authorized ⚠️"))
+    }
+
+    /// YouTube Music だけが再生中でも、Discord は「待機」ではなく接続状態を出す。
+    func testDiscordIsNotIdleWhileYouTubeMusicPlays() {
+        var input = youtubeInput()
+        input.discordState = .connected
+        XCTAssertEqual(StatusLinesBuilder.lines(input).last, "Discord: Connected")
+    }
 }

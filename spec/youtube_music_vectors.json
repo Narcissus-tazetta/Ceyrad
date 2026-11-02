@@ -1,0 +1,61 @@
+{
+  "description": "YouTube Music detection vectors shared by the macOS (Swift) and Windows (Rust) builds. See spec/README.md.",
+  "cases": [
+    {
+      "name": "a browser reporting an album with a YouTube Music tab open is YouTube Music",
+      "isBrowser": true,
+      "album": "pupa",
+      "hasYouTubeMusicTab": true,
+      "expected": true
+    },
+    {
+      "name": "a browser reporting an album without a YouTube Music tab is something else",
+      "isBrowser": true,
+      "album": "pupa",
+      "hasYouTubeMusicTab": false,
+      "expected": false
+    },
+    {
+      "name": "a browser reporting no album is a plain video even with a YouTube Music tab open",
+      "isBrowser": true,
+      "album": "",
+      "hasYouTubeMusicTab": true,
+      "expected": false
+    },
+    {
+      "name": "an album made only of whitespace counts as no album",
+      "isBrowser": true,
+      "album": "  　\t",
+      "hasYouTubeMusicTab": true,
+      "expected": false
+    },
+    {
+      "name": "a player that is not a browser is never YouTube Music",
+      "isBrowser": false,
+      "album": "pupa",
+      "hasYouTubeMusicTab": true,
+      "expected": false
+    },
+    {
+      "name": "without a tab check the album alone decides",
+      "isBrowser": true,
+      "album": "pupa",
+      "hasYouTubeMusicTab": null,
+      "expected": true
+    },
+    {
+      "name": "without a tab check, no album is still not YouTube Music",
+      "isBrowser": true,
+      "album": "",
+      "hasYouTubeMusicTab": null,
+      "expected": false
+    },
+    {
+      "name": "without a tab check, a non-browser is still not YouTube Music",
+      "isBrowser": false,
+      "album": "pupa",
+      "hasYouTubeMusicTab": null,
+      "expected": false
+    }
+  ]
+}

@@ -107,8 +107,8 @@ pub struct CatalogInfo {
     pub artwork_url: Option<String>,
 }
 
-/// What Apple Music is doing right now. There is one player, so this is the
-/// whole of the app's music-side state.
+/// What one source (Apple Music, or YouTube Music in a browser) is doing right
+/// now. The app keeps one of these per source.
 #[derive(Debug, Clone)]
 pub struct MusicState {
     pub running: bool,
@@ -123,6 +123,10 @@ pub struct MusicState {
     /// be tried again. A failure is not an answer, so unlike a catalogue miss
     /// it must not silently cost the track its artwork for good.
     pub catalog_retry_at: Option<Instant>,
+    /// When this source last started playing, meaning went from not playing to
+    /// playing. Kept through a pause so that two paused sources can still be
+    /// told apart by which was listened to last.
+    pub playing_since: Option<Instant>,
 }
 
 impl Default for MusicState {
@@ -134,11 +138,21 @@ impl Default for MusicState {
             catalog: None,
             catalog_requested_for: None,
             catalog_retry_at: None,
+            playing_since: None,
         }
     }
 }
 
 impl MusicState {
+    /// Records what the player now says it is doing, stamping `playing_since`
+    /// when that is a start rather than a continuation.
+    pub fn set_player_state(&mut self, new: PlayerState, now: Instant) {
+        if new == PlayerState::Playing && self.player_state != PlayerState::Playing {
+            self.playing_since = Some(now);
+        }
+        self.player_state = new;
+    }
+
     /// Whether there is something to put on Discord: running, with a track, and
     /// not stopped. A paused player still counts — whether the presence is
     /// actually cleared is `pause_hide_minutes`'s decision, not this one.
@@ -231,6 +245,28 @@ mod tests {
         let mut paused = playing_with_track();
         paused.player_state = PlayerState::Paused;
         assert!(paused.is_displayable());
+    }
+
+    #[test]
+    fn only_a_start_restamps_playing_since() {
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_secs(10);
+        let t2 = t0 + Duration::from_secs(20);
+        let mut state = MusicState::default();
+
+        state.set_player_state(PlayerState::Playing, t0);
+        assert_eq!(state.playing_since, Some(t0));
+
+        // Still playing: a continuation, not a start.
+        state.set_player_state(PlayerState::Playing, t1);
+        assert_eq!(state.playing_since, Some(t0));
+
+        // Pausing keeps the stamp, so two paused sources stay comparable.
+        state.set_player_state(PlayerState::Paused, t1);
+        assert_eq!(state.playing_since, Some(t0));
+
+        state.set_player_state(PlayerState::Playing, t2);
+        assert_eq!(state.playing_since, Some(t2));
     }
 
     #[test]

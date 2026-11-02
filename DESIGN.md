@@ -31,6 +31,7 @@ v1からの主な変更点:
   - 曲ページ / アーティストページ / アルバムページ / カスタムURL / リポジトリ / 無効
   - Catalog URLが解決できない曲（ローカル取り込み等）はそのボタンを表示しない
 - Apple Musicが**起動していないときは一切動作しない**（監視・接続・通知購読すべて停止）
+  - 例外はYouTube Musicの検知（§11）。利用者がオンにしたときだけ動く
 
 ### 非機能要件
 
@@ -94,7 +95,7 @@ v1からの主な変更点:
 ### 4.3 MusicAppleScript
 
 - AppleScript呼び出しは「通知発火時の位置補完」と「初期状態取得」の2箇所のみ。定期実行なし
-- MediaRemote私的フレームワークはmacOS 15.4以降エンタイトルメント制限があるため使わない
+- Apple Musicの取得にはMediaRemote私的フレームワークを使わない。macOS 15.4以降はエンタイトルメント制限があり、通知とAppleScriptで足りる。MediaRemoteを使うのはYouTube Musicの検知だけ（§11）
 - 実数→文字列のロケール差（小数点カンマ）を吸収してパースする
 
 ### 4.4 ITunesSearchClient（v1のMusicKit案を置き換え）
@@ -198,27 +199,19 @@ v1からの主な変更点:
 
 ---
 
-## 8. マルチソース対応の廃止（v3〜v4: Spotify → v5で削除 → v6で足場も撤去）
+## 8. 複数ソース
 
-v3でApple Musicハードコード（v2）を2ソース化し、`MusicSourceID`（`.appleMusic` / `.spotify`）とディスクリプタで宣言的差分を、`AppDelegate`のswitchで振る舞いの差分（位置補完・カタログ解決）を吸収する設計にした。v4でSpotifyの既定を無効化（Discord本体が公式のSpotify連携を持つため副次機能扱い）。
+音楽ソースは`MusicSource`（`appleMusic` / `youtubeMusic`）の2つ。状態は`MusicState`をソースごとに1つ持ち、
+Discordに出すソースは`SourceSelector.select`が状態だけから決める純関数。
 
-v5でSpotify対応そのものを削除。ただし`MusicSourceID`・`MusicSourceDescriptor`・`SourceStates`・`SourceSelector`は1ケースのenumを軸にした形のまま残していた。
+- 表示できる（`isDisplayable`）ソースが1つならそれ
+- 両方なら再生中が一時停止に優先し、同じ状態どうしなら`playingSince`（`.playing`に遷移した時刻）が新しい方
+- 時刻も並ぶ（どちらも再生したことがない）ときはApple Music
 
-v6でその足場も撤去した。1ソースしかない以上、これらは「型で嘘をつく間接層」になっていた——`SourceStates`のsubscriptは引数のidを無視して常に同じ値を返し、`SourceSelector.selectActiveSource`の`current:`引数はどこからも読まれず、`lastEventUptimeNs`（両ソース再生中の優先判定用）は書かれるだけで読む場所がなく、client ID切替の再ハンドシェイク経路は到達不能だった。
-
-現在の形（macOS / Windows 共通）:
-
-| 旧 | 新 |
-|---|---|
-| `MusicSourceID` + `MusicSourceDescriptor` | `AppleMusic` / `core::apple_music`（定数と通知パースのみ） |
-| `SourceStates` + `SourceState` | `MusicState` 1つ |
-| `SourceSelector.selectActiveSource` | `MusicState.isDisplayable` |
-| `activeSource: MusicSourceID?` | `displaying: Bool` |
-| client ID切替の再ハンドシェイク | 削除（client IDは固定） |
-
-再び複数ソースに戻すなら、`MusicState`を複数持って`isDisplayable`の優先判定を足すところからになる。1ソース分の型を薄く保つほうが、使われない一般化を抱えるより戻しやすい。
-
----
+Discordに出る名前はApplication（client ID）で決まり、接続はApplicationごとなので、表示するソースが
+変わったら`AppDelegate+Discord`が接続を閉じて新しいソースのclient IDで繋ぎ直す。繋ぎ直しの最中は、
+別のApplicationの名前でActivityを送らないよう、`flushActivity`が接続中のソースと表示ソースの一致を確かめる。
+接続しておくのは、表示中のソースがあればそれ、なければ起動中のApple Music。どちらもなければ繋がない。
 
 ## 9. macOS版とWindows版の一致（v6）
 
@@ -247,6 +240,8 @@ Discordへ送るActivityの組み立ては、Swift（`ActivityBuilder`）とRust
 | URL入力ループ | `URLPrompt` | `core::url_prompt` |
 | 送信済み内容の記憶 | `AppDelegate.LastSent` | `core::presence::Presence` |
 | 再接続バックオフ | `ReconnectBackoff` | `core::backoff::Backoff` |
+| 表示ソースの選択 | `SourceSelector` | `core::source` |
+| YouTube Musicの判定 | `YouTubeMusic` | `core::youtube_music` |
 | 一時停止タイマー | `PauseHideTimer` | `core::timers`（`Timer::PauseHide`） |
 
 **メニューはデータとして組み立てる。** `MenuModel` / `core::menu_model` はOS APIを一切呼ばず、
@@ -261,3 +256,45 @@ Discord"・ボタンラベル）は翻訳対象外で、常に英語。
 `activity_builder::is_equivalent`。タイムスタンプは2秒のドリフトを許容）。
 接続が切れた/繋がった瞬間には**必ず忘れる**——新しい接続には何も表示されていないので、
 覚えたままだと1発目が「前と同じ」と誤判定されて何も出なくなる。
+
+---
+
+## 11. YouTube Musicの検知（オプトイン、既定オフ）
+
+ブラウザで再生中のYouTube Musicを、拡張機能なしで「YouTube Musicを再生中」として出す。メニューの
+「Detect YouTube Music (browser)」をオンにしたときだけ動く。オフの間の常駐コストは増えない。
+
+### 取得（macOS）
+
+システム全体の「いま再生中」はMediaRemoteが持つが、macOS 15.4以降は`/usr/bin/perl`だけがそれを読む
+エンタイトルメントを持つ。そこで[mediaremote-adapter](https://github.com/ungive/mediaremote-adapter)
+（BSD-3-Clause）を`.app`に同梱し、perlに読み込ませて`stream`の標準出力をJSONで受け取る（`NowPlayingAdapter`）。
+
+- コミットで固定してビルドする（`scripts/build-mediaremote-adapter.sh`、cmakeが要る）。フレームワークはリンクしない
+- 起動時にadapterの`test`を実行し、失敗したら機能を使えない状態にして理由をメニューに出す（黙って落とさない）
+- 子プロセスは常駐し、出力が届いたときだけ処理する。`--no-artwork`でアートワークの運搬を省く。
+  前回が`stop()`を通らず落ちて残ったperlは、起動時に同じ引数のものを`pkill`で片付ける
+- MediaRemoteは「選ばれた1つ」しか報告しない。Apple Musicが選ばれている間のYouTube Musicは見えない
+
+### 判定
+
+`YouTubeMusic.matches`が両OS共通の規則（`spec/youtube_music_vectors.json`）:
+ブラウザで、アルバム名があり、再生元のブラウザに`music.youtube.com`のタブがある。タブを読めない
+Windowsは、タブの条件を外してアルバム名だけで決める。
+
+macOSだけの補強として、アルバム名が空でも、再生中の曲名がYouTube Musicのタブのタイトル
+（「曲名 | YouTube Music」）と一致すれば拾う（ページを読み込み直した直後の曲にはアルバム名が付かない）。
+通常のYouTube動画のタブは別のサフィックスなので一致しない。
+
+- タブは`BrowserTabs`がAppleScriptで読む。新しい曲が来たときだけで、同じ曲のあいだは前回の結果を使い回す。
+  読めるブラウザの許可リストは`YouTubeMusic.browserBundleIds`（Chromium系とSafari。Firefoxは非対応）
+- アーティストが空の更新（曲が替わった直後でメタデータが揃う前）は待つ。曲名だけでカタログを引くと別の曲に当たる
+- YouTube Musicでなくなっても2.5秒は消さない。曲替わりでアルバム名が遅れて届くあいだの点滅を防ぐ
+
+### 表示
+
+- アートワークは、Apple Musicと同じiTunes Search APIの照会で引く
+- 曲ボタンはタブのURL。複数のタブがあるときは曲名がタイトルと一致するもの。`/watch`以外のページ
+  （ホームなど）を開いているときはURLが曲を指さないので出さない
+- アーティスト/アルバムのボタンはApple Musicのページを指すので出さない。曲ボタンの既定ラベルは
+  「Play on YouTube Music」（利用者が変えたラベルは保持）

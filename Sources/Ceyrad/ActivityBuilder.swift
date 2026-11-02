@@ -13,6 +13,7 @@ enum ActivityBuilder {
     static func build(
         track: TrackInfo, playerState: PlayerState,
         catalog: CatalogInfo?, settings: SettingsStore,
+        source: MusicSource = .appleMusic,
         now: Date = Date()
     ) -> [String: Any] {
         // type 2 = Listening（「〜を再生中」表示）
@@ -76,7 +77,7 @@ enum ActivityBuilder {
             ]
         }
 
-        let buttons = buildButtons(catalog: catalog, settings: settings)
+        let buttons = buildButtons(catalog: catalog, settings: settings, source: source)
         if !buttons.isEmpty {
             activity["buttons"] = buttons
         }
@@ -127,18 +128,19 @@ enum ActivityBuilder {
 
     /// Discord RPC仕様: ボタンは最大2個、label<=32文字、url<=512文字
     private static func buildButtons(
-        catalog: CatalogInfo?, settings: SettingsStore
+        catalog: CatalogInfo?, settings: SettingsStore, source: MusicSource
     ) -> [[String: String]] {
         var buttons: [[String: String]] = []
         var usedURLs = Set<String>()
         for slot in ButtonSlot.allCases {
             let type = settings.buttonType(slot)
             guard type != .disabled,
+                !(source == .youtubeMusic && (type == .artist || type == .album)),
                 let url = resolveURL(type: type, catalog: catalog, settings: settings),
                 isValidButtonURL(url),
                 !usedURLs.contains(url)
             else { continue }
-            let label = settings.buttonLabel(slot)
+            let label = buttonLabel(slot, type: type, settings: settings, source: source)
             buttons.append([
                 "label": label.isEmpty
                     ? "Link" : Text.truncate(label, max: SettingsStore.maxLabelCharacters),
@@ -147,6 +149,18 @@ enum ActivityBuilder {
             usedURLs.insert(url)
         }
         return buttons
+    }
+
+    /// 利用者が変えていない曲ボタンのラベルだけ、ソースに合わせて差し替える。
+    /// アーティスト/アルバムのページは Apple Music のものなので、YouTube Music では出さない（上で除外）。
+    private static func buttonLabel(
+        _ slot: ButtonSlot, type: LinkType, settings: SettingsStore, source: MusicSource
+    ) -> String {
+        let label = settings.buttonLabel(slot)
+        if source == .youtubeMusic, type == .song, label == type.defaultLabel {
+            return LinkType.youtubeMusicSongLabel
+        }
+        return label
     }
 
     /// Catalog URLが解決できなかった場合（ローカル取り込み曲など）はそのボタンを出さない

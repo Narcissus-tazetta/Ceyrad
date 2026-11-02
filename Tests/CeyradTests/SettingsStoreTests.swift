@@ -28,6 +28,13 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.repositoryURL, SettingsStore.defaultRepositoryURL)
     }
 
+    /// perl の子プロセスを常駐させる機能なので、利用者が選ぶまでは動かさない。
+    func testYouTubeMusicDetectionIsOffUntilChosen() {
+        XCTAssertFalse(settings.youtubeMusicEnabled)
+        settings.youtubeMusicEnabled = true
+        XCTAssertTrue(settings.youtubeMusicEnabled)
+    }
+
     /// 2つのスロットは完全に対称でなければならない。
     /// 片方だけに効く設定が生まれると、メニューは同じ見た目のまま挙動だけが食い違う。
     func testBothSlotsBehaveIdentically() {

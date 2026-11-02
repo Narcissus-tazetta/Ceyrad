@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use ceyrad::core::activity_builder::{build, is_equivalent};
 use ceyrad::core::models::{PlayerState, TrackInfo};
 use ceyrad::core::settings_model::Settings;
+use ceyrad::core::source::Source;
 
 fn playing_track() -> TrackInfo {
     let mut track = TrackInfo::new("Song", "Artist", "Album");
@@ -16,7 +17,14 @@ fn playing_track() -> TrackInfo {
 }
 
 fn built_at(track: &TrackInfo, now: SystemTime) -> serde_json::Map<String, serde_json::Value> {
-    build(track, PlayerState::Playing, None, &Settings::default(), now)
+    build(
+        Source::AppleMusic,
+        track,
+        PlayerState::Playing,
+        None,
+        &Settings::default(),
+        now,
+    )
 }
 
 #[test]
@@ -58,7 +66,14 @@ fn pausing_is_not_equivalent() {
     let track = playing_track();
     let now = SystemTime::now();
     let playing = built_at(&track, now);
-    let paused = build(&track, PlayerState::Paused, None, &Settings::default(), now);
+    let paused = build(
+        Source::AppleMusic,
+        &track,
+        PlayerState::Paused,
+        None,
+        &Settings::default(),
+        now,
+    );
     assert!(!is_equivalent(&playing, &paused));
 }
 
@@ -76,6 +91,7 @@ fn a_missing_key_is_not_equivalent() {
 fn activities_without_timestamps_compare_exactly() {
     let now = SystemTime::now();
     let paused = build(
+        Source::AppleMusic,
         &playing_track(),
         PlayerState::Paused,
         None,

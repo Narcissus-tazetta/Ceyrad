@@ -81,6 +81,7 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(actions.contains(.editCustomURL))
         XCTAssertTrue(actions.contains(.editRepositoryURL))
         XCTAssertTrue(actions.contains(.toggleLaunchAtLogin))
+        XCTAssertTrue(actions.contains(.toggleYouTubeMusic))
         XCTAssertTrue(actions.contains(.reconnect))
         XCTAssertTrue(actions.contains(.checkForUpdates))
         XCTAssertTrue(actions.contains(.quit))
@@ -146,6 +147,21 @@ final class MenuModelTests: XCTestCase {
             }
             XCTAssertEqual(checked, enabled)
         }
+    }
+
+    /// YouTube Music の検知は設定の値をそのまま映す。既定はオフ。
+    func testYouTubeMusicToggleReflectsTheSetting() {
+        func checked() -> Bool? {
+            let row = build().first { row in
+                if case .choice(_, .toggleYouTubeMusic, _) = row { return true }
+                return false
+            }
+            guard case .choice(_, _, let checked)? = row else { return nil }
+            return checked
+        }
+        XCTAssertEqual(checked(), false)
+        settings.youtubeMusicEnabled = true
+        XCTAssertEqual(checked(), true)
     }
 
     // MARK: - ラベル

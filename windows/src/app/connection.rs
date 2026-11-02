@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use windows::Win32::Foundation::HANDLE;
 
-use crate::core::apple_music;
 use crate::core::backoff::Backoff;
 use crate::core::models::ConnState;
 use crate::core::presence::{Activity, Presence};
+use crate::core::source::Source;
 use crate::discord::client::{Client, Event};
 use crate::discord::pipe::Wakeup;
 
@@ -51,10 +51,16 @@ impl Connection {
         self.client.state() == ConnState::Disconnected
     }
 
-    /// Opens a pipe to Discord. The caller arms the handshake timeout on `Ok`.
-    pub fn connect(&mut self) -> io::Result<()> {
+    /// The Application the live connection was opened under, if any.
+    pub fn client_id(&self) -> Option<&'static str> {
+        self.client.client_id()
+    }
+
+    /// Opens a pipe to Discord under the Application `source` is shown as. The
+    /// caller arms the handshake timeout on `Ok`.
+    pub fn connect(&mut self, source: Source) -> io::Result<()> {
         self.presence.forget();
-        self.client.connect(apple_music::DISCORD_CLIENT_ID)
+        self.client.connect(source.client_id())
     }
 
     pub fn disconnect(&mut self, clear_activity: bool) {

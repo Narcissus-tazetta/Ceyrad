@@ -4,7 +4,10 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// カタログ照会が失敗したあと、訊き直してよくなるまでの間隔。
     /// 少しオフラインだっただけで通知1回につき1リクエスト、とならない程度に長くとる。
-    private static let catalogRetryDelay: TimeInterval = 15
+    static let catalogRetryDelay: TimeInterval = 15
+    /// YouTube Music でなくなったと見えてから、表示を消すまでの猶予。
+    /// 曲が替わる瞬間はアルバム名が遅れて届くため、見えた瞬間に消すと点滅する。
+    static let youtubeLossGrace: TimeInterval = 2.5
 
     let settings = SettingsStore.shared
     private let lifecycle = AppLifecycleWatcher()
@@ -12,28 +15,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notificationName: AppleMusic.notificationName,
         parse: AppleMusic.parse
     )
-    private let rpc = DiscordRPCClient()
-    private let itunes = ITunesSearchClient()
-    private let debouncer = Debouncer(delay: 0.8)
+    let rpc = DiscordRPCClient()
+    let itunes = ITunesSearchClient()
+    let debouncer = Debouncer(delay: 0.8)
     private var menuBar: MenuBarController!
     private var updaterController: SPUStandardUpdaterController!
 
-    private var music = MusicState()
+    var appleMusic = MusicState()
+    var youtube = MusicState()
     /// いまDiscordに何かを表示しているか。
-    private var displaying = false
+    var displaying = false
+    /// 表示しているソース。接続すべき client ID はこれで決まる。
+    var displayedSource: MusicSource?
+    /// いまの接続（または接続中）が使っている client ID のソース。
+    var connectedSource: MusicSource?
 
     /// 直近でDiscordに送った内容。同じものの再送を抑えるために持つ。
-    private var lastSent: LastSent = .nothing
+    var lastSent: LastSent = .nothing
 
-    private let reconnect = ReconnectBackoff()
-    private let pauseHide = PauseHideTimer()
-    private var catalogRetryWork: DispatchWorkItem?
+    let reconnect = ReconnectBackoff()
+    let pauseHide = PauseHideTimer()
+    var catalogRetryWork: [MusicSource: DispatchWorkItem] = [:]
+
+    // YouTube Music（AppDelegate+YouTubeMusic.swift）
+    let nowPlaying = NowPlayingAdapter()
+    /// 検知が有効なのに使えない理由。`nil` なら使える（または無効）。
+    var youtubeUnavailable: String?
+    var latestPayload: NowPlayingPayload?
+    /// 同じ曲のあいだ AppleScript を繰り返さないための、直近のタブ確認の結果。
+    var youtubeTabVerdict: (identity: String, tabs: [BrowserTab])?
+    var youtubeLossWork: DispatchWorkItem?
 
     /// この接続でDiscordに送った最後の内容。
     ///
     /// 「まだ何も送っていない」と「表示を消すよう送った」は別物で、混ぜると
     /// 再接続直後の1発目が「前と同じ」と誤判定されて何も表示されなくなる。
-    private enum LastSent {
+    enum LastSent {
         case nothing
         case sent([String: Any]?)
 
@@ -63,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onAction = { [weak self] action in self?.apply(action) }
 
         musicObserver.onUpdate = { [weak self] state, info in
-            self?.handlePlayerUpdate(state: state, info: info)
+            self?.handlePlayerUpdate(.appleMusic, state: state, info: info)
         }
         rpc.onStateChange = { [weak self] state in self?.handleRPCState(state) }
 
@@ -71,25 +88,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lifecycle.onPlayerTerminate = { [weak self] in self?.playerTerminated() }
         lifecycle.onDiscordLaunch = { [weak self] in
             // Discordが後から起動したケース: バックオフを待たず即接続
-            guard let self, self.music.running else { return }
+            guard let self, self.connectionSource != nil else { return }
             self.cancelReconnect()
             self.attemptConnect()
         }
+        configureYouTubeMusic()
         lifecycle.start()
     }
 
     func applicationWillTerminate(_: Notification) {
+        nowPlaying.stop()
         // asyncだとプロセス終了までに送信が走らないことがあるため、終了時だけ同期で行う
         rpc.shutdownSync(clearActivity: true)
     }
 
-    // MARK: - Player lifecycle
+    // MARK: - Source state
+
+    func state(_ source: MusicSource) -> MusicState {
+        switch source {
+        case .appleMusic: return appleMusic
+        case .youtubeMusic: return youtube
+        }
+    }
+
+    func update(_ source: MusicSource, _ body: (inout MusicState) -> Void) {
+        switch source {
+        case .appleMusic: body(&appleMusic)
+        case .youtubeMusic: body(&youtube)
+        }
+    }
+
+    // MARK: - Apple Music lifecycle
 
     private func playerLaunched() {
-        guard !music.running else { return }
-        music.running = true
+        guard !appleMusic.running else { return }
+        appleMusic.running = true
         musicObserver.start()
-        attemptConnect()
+        syncConnection()
         // 起動直後はスクリプティングに応答しないことがあるため少し待ってから初期状態を取得。
         // 通知は状態変化時にしか飛ばないため、既に再生中だった場合はこの1回が必要。
         scheduleInitialFetch(attempt: 0)
@@ -101,11 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func scheduleInitialFetch(attempt: Int) {
         let delay = 2.0 * pow(2.0, Double(attempt))
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.music.running, self.music.track == nil else { return }
+            guard let self, self.appleMusic.running, self.appleMusic.track == nil else { return }
             MusicAppleScript.currentState { [weak self] result in
-                guard let self, self.music.running, self.music.track == nil else { return }
+                guard let self, self.appleMusic.running, self.appleMusic.track == nil else { return }
                 if let (state, info) = result {
-                    self.handlePlayerUpdate(state: state, info: info)
+                    self.handlePlayerUpdate(.appleMusic, state: state, info: info)
                 } else if attempt < 4 {
                     self.scheduleInitialFetch(attempt: attempt + 1)
                 }
@@ -114,43 +149,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func playerTerminated() {
-        guard music.running else { return }
+        guard appleMusic.running else { return }
         musicObserver.stop()
-        music = MusicState()
-        goDormant()
-    }
-
-    /// プレイヤーが終了した: 全て止めて完全休止に戻す（常時接続しない）。
-    ///
-    /// 「止めるものを1つ書き忘れる」が起きないよう、休止に入る道はこれ1本だけにする。
-    private func goDormant() {
-        displaying = false
-        cancelReconnect()
-        pauseHide.cancel()
-        cancelCatalogRetry()
-        debouncer.cancel()
-        lastSent = .nothing
-        rpc.shutdown(clearActivity: true)
+        appleMusic = MusicState()
+        cancelCatalogRetry(.appleMusic)
+        reevaluate()
     }
 
     // MARK: - Now playing
 
-    private func handlePlayerUpdate(state: PlayerState, info: TrackInfo?) {
-        music.playerState = state
+    func handlePlayerUpdate(
+        _ source: MusicSource, state newState: PlayerState, info: TrackInfo?,
+        pageURL: String? = nil
+    ) {
         var trackChanged = false
-        if state != .stopped, let info {
-            trackChanged = music.track.map { $0.identity != info.identity } ?? true
-            if trackChanged { resetCatalog() }
-            music.track = info
-            requestMissingCatalog()
-            backfillPositionIfNeeded(info)
-        } else {
-            music.track = nil
-            resetCatalog()
+        var catalogReset = false
+        update(source) { current in
+            let wasPlaying = current.playerState == .playing
+            current.playerState = newState
+            if newState != .stopped, let info {
+                trackChanged = current.track.map { $0.identity != info.identity } ?? true
+                catalogReset = trackChanged
+                if trackChanged { current.clearCatalog() }
+                current.track = info
+                current.pageURL = pageURL
+            } else {
+                current.track = nil
+                current.pageURL = nil
+                current.clearCatalog()
+                catalogReset = true
+            }
+            if newState == .playing, !wasPlaying { current.playingSince = Date() }
         }
+        if catalogReset { cancelCatalogRetry(source) }
+        if let info, newState != .stopped {
+            requestMissingCatalog(source)
+            if source == .appleMusic { backfillPositionIfNeeded(info) }
+        }
+        reevaluate(trackChanged: trackChanged)
+    }
 
-        let shouldDisplay = music.isDisplayable
-        if shouldDisplay != displaying {
+    /// どのソースを出すか・どの client ID で繋ぐかを決め直す。状態が動いたら必ずここを通る。
+    func reevaluate(trackChanged: Bool = false) {
+        let active = SourceSelector.select(appleMusic: appleMusic, youtubeMusic: youtube)
+        let sourceChanged = active != displayedSource
+        displayedSource = active
+        syncConnection()
+
+        let shouldDisplay = active != nil
+        if shouldDisplay != displaying || sourceChanged {
             setDisplaying(shouldDisplay)
         } else if displaying {
             // 一時停止したまま曲を替えた場合も「操作した」とみなし、
@@ -169,81 +216,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard info.positionSec == nil else { return }
         MusicAppleScript.playerPosition { [weak self] position in
             guard let self, let position,
-                var current = self.music.track, current.identity == info.identity
+                var current = self.appleMusic.track, current.identity == info.identity
             else { return }
             (current.positionSec, current.positionSampledAt) = (position, Date())
-            self.music.track = current
-            if self.displaying {
+            self.appleMusic.track = current
+            if self.displayedSource == .appleMusic {
                 self.pushActivity()
             }
         }
-    }
-
-    // MARK: - Catalog
-
-    /// アートワークとリンクを持たない再生中の曲について照会を投げる。
-    ///
-    /// 通知のたびに呼ばれるので、`catalogRequestedFor` の番人が
-    /// 「イベントの頻度」を「リクエストの頻度」に変えないようにしている。
-    private func requestMissingCatalog() {
-        guard music.running, music.catalog == nil,
-            let track = music.track, !track.name.isEmpty
-        else { return }
-        // 失敗した照会が冷却期間中
-        if let retryAt = music.catalogRetryAt, retryAt > Date() { return }
-        guard music.catalogRequestedFor != track.identity else { return }
-
-        music.catalogRequestedFor = track.identity
-        music.catalogRetryAt = nil
-        itunes.resolve(
-            name: track.name, artist: track.artist, album: track.album
-        ) { [weak self] outcome in
-            self?.applyCatalog(target: track, outcome: outcome)
-        }
-    }
-
-    /// 返ってきた照会結果を反映する。遅れて届いた答えは、その曲がまだ再生中のときだけ使う。
-    private func applyCatalog(target: TrackInfo, outcome: CatalogOutcome) {
-        guard let current = music.track, current.identity == target.identity else { return }
-        switch outcome {
-        case .found(let info):
-            music.catalog = info
-            music.catalogRetryAt = nil
-            // 先にアートなしで送信済みなので、解決できてかつ表示中のときだけ再送する
-            if displaying { pushActivity() }
-        case .missing:
-            // 曲の性質による確定した答え（ローカル取り込み等）。訊き直さない。
-            music.catalog = nil
-            music.catalogRetryAt = nil
-        case .failed:
-            // 答えではない。番人を外して冷却期間のあとに訊き直せるようにする。
-            music.catalogRequestedFor = nil
-            music.catalogRetryAt = Date().addingTimeInterval(Self.catalogRetryDelay)
-            scheduleCatalogRetry()
-        }
-    }
-
-    private func scheduleCatalogRetry() {
-        catalogRetryWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.catalogRetryWork = nil
-            self.music.catalogRetryAt = nil
-            self.requestMissingCatalog()
-        }
-        catalogRetryWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.catalogRetryDelay, execute: work)
-    }
-
-    private func cancelCatalogRetry() {
-        catalogRetryWork?.cancel()
-        catalogRetryWork = nil
-    }
-
-    /// カタログ状態を白紙に戻す。予約済みの再試行も一緒に落とす。
-    private func resetCatalog() {
-        music.clearCatalog()
-        cancelCatalogRetry()
     }
 
     // MARK: - Activity
@@ -256,36 +236,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pushActivity()
     }
 
-    private func pushActivity() {
-        guard music.running else { return }
+    func pushActivity() {
+        guard connectionSource != nil else { return }
+        let source = displayedSource
         let activity = buildActivity()
-        debouncer.schedule { [weak self] in self?.flushActivity(activity) }
+        debouncer.schedule { [weak self] in self?.flushActivity(activity, for: source) }
     }
 
     private func buildActivity() -> [String: Any]? {
-        guard displaying, let track = music.track, shouldShowActivity(music.playerState)
-        else { return nil }
+        guard displaying, let source = displayedSource else { return nil }
+        let current = state(source)
+        guard let track = current.track, shouldShowActivity(current.playerState) else { return nil }
+        var catalog = current.catalog
+        if source == .youtubeMusic {
+            // アーティスト/アルバムのページはApple Musicのものなので、曲ページ（タブのURL）と
+            // アートワークだけを引き継ぐ。
+            catalog = CatalogInfo(songURL: current.pageURL, artworkURL: current.catalog?.artworkURL)
+        }
         return ActivityBuilder.build(
-            track: track, playerState: music.playerState,
-            catalog: music.catalog, settings: settings
+            track: track, playerState: current.playerState,
+            catalog: catalog, settings: settings, source: source
         )
-    }
-
-    /// デバウンス窓が明けた実際の送信。
-    ///
-    /// 未接続なら捨てる: 接続できたら新しく組み立て直したものが送られるので、そちらのほうが新しい。
-    ///
-    /// `setActivity`はソケット用キューに渡すだけで成否を返さないため、`lastSent`は
-    /// 「Discordに届いた」ではなく「渡した」時点で更新される。それでも届かなかった内容が
-    /// その後の送信を抑止し続けないのは、書き込みに失敗したソケットが`teardown`から
-    /// `.disconnected`を通り、`handleRPCState`がそこで`lastSent`を捨てるため——
-    /// つまり抑止が生き残るのは接続が生きている間だけ、という不変条件で担保している。
-    /// （Windows版は同期送信なので戻り値を見て更新する。行き着く先は同じ）
-    private func flushActivity(_ activity: [String: Any]?) {
-        guard rpc.state == .connected else { return }
-        guard !lastSent.isEquivalent(to: activity) else { return }
-        rpc.setActivity(activity)
-        lastSent = .sent(activity)
     }
 
     private func shouldShowActivity(_ playerState: PlayerState) -> Bool {
@@ -300,13 +271,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 一時停止が続いているなら消すまでのカウントを始める。
     /// 一時停止でなくなったら、計測も「消した」という事実も取り消す。
-    private func updatePauseTimer() {
-        guard displaying, music.playerState == .paused else {
+    func updatePauseTimer() {
+        guard displaying, displayedSource.map({ state($0).playerState }) == .paused else {
             pauseHide.cancel()
             return
         }
         pauseHide.arm(minutes: settings.pauseHideMinutes) { [weak self] in
-            guard let self, self.music.playerState == .paused else { return }
+            guard let self, self.displayedSource.map({ self.state($0).playerState }) == .paused
+            else { return }
             self.pushActivity()
         }
     }
@@ -324,8 +296,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func menuInput() -> MenuModel.Input {
         MenuModel.Input(
             status: StatusLinesBuilder.Input(
-                music: music,
+                music: appleMusic,
                 musicNotAuthorized: MusicAppleScript.notAuthorized,
+                youtube: youtube,
+                youtubeEnabled: settings.youtubeMusicEnabled,
+                youtubeUnavailable: youtubeUnavailable,
+                browserNotAuthorized: BrowserTabs.notAuthorized,
                 discordState: rpc.state,
                 language: settings.language
             ),
@@ -336,53 +312,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func checkForUpdates() {
         updaterController.checkForUpdates(nil)
-    }
-}
-
-// MARK: - Discord connection
-
-extension AppDelegate {
-    private func handleRPCState(_ state: DiscordRPCClient.ConnState) {
-        switch state {
-        case .connected:
-            reconnect.reset()
-            // つながったばかりの接続には何も表示されていない。前回の送信を覚えたままだと
-            // 1発目が「前と同じ」と判定されて、何も出ないまま終わる。
-            lastSent = .nothing
-            pushActivity()
-        case .disconnected:
-            lastSent = .nothing
-            if reconnect.takeImmediate() {
-                attemptConnect()
-            } else if music.running {
-                // プレイヤーが動いているときだけ再試行する（常時接続しない）
-                reconnect.schedule { [weak self] in self?.attemptConnect() }
-            }
-        case .connecting:
-            break
-        }
-    }
-
-    /// メニューの「Reconnect to Discord」。
-    ///
-    /// つながっていても一度切ってから繋ぎ直す。「Reconnect」と書かれたボタンは
-    /// 見た目に問題がないときこそ押されるもので、そこで何も起きないのが一番困る。
-    func reconnectNow() {
-        reconnect.reset()
-        guard rpc.state != .disconnected else {
-            attemptConnect()
-            return
-        }
-        reconnect.expectImmediateReconnect()
-        rpc.shutdown(clearActivity: true)
-    }
-
-    func attemptConnect() {
-        guard music.running, rpc.state == .disconnected else { return }
-        rpc.connect(clientId: SettingsStore.discordClientId)
-    }
-
-    func cancelReconnect() {
-        reconnect.reset()
     }
 }

@@ -9,6 +9,7 @@ use ceyrad::core::models::{CatalogInfo, PlayerState, TrackInfo};
 use ceyrad::core::settings_model::{
     BadgeLabelType, ButtonSlot, LinkType, Settings, DEFAULT_REPOSITORY_URL,
 };
+use ceyrad::core::source::Source;
 
 type Activity = Map<String, Value>;
 
@@ -41,7 +42,14 @@ fn build_now(
     catalog: Option<&CatalogInfo>,
     settings: &Settings,
 ) -> Activity {
-    build(track, state, catalog, settings, SystemTime::now())
+    build(
+        Source::AppleMusic,
+        track,
+        state,
+        catalog,
+        settings,
+        SystemTime::now(),
+    )
 }
 
 fn string_field<'a>(activity: &'a Activity, key: &str) -> &'a str {
@@ -186,6 +194,7 @@ fn stale_position_sample_is_corrected_for_elapsed_time() {
     stale.position_sampled_at = now - Duration::from_secs(10);
 
     let activity = build(
+        Source::AppleMusic,
         &stale,
         PlayerState::Playing,
         None,
@@ -390,6 +399,7 @@ fn song_button_label_follows_source() {
     settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
 
     let apple_music = build(
+        Source::AppleMusic,
         &track(),
         PlayerState::Playing,
         Some(&catalog()),
@@ -408,6 +418,7 @@ fn custom_button_label_wins_over_source_default() {
     settings.set_button_type(ButtonSlot::Two, LinkType::Disabled);
     settings.set_button_label(ButtonSlot::One, "My Label");
     let apple_music = build(
+        Source::AppleMusic,
         &track(),
         PlayerState::Playing,
         Some(&catalog()),

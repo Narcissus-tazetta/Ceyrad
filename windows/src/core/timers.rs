@@ -27,16 +27,19 @@ pub enum Timer {
     UpdateCheck,
     /// When a catalog lookup that failed outright may be retried.
     CatalogRetry,
+    /// When a YouTube Music session that stopped looking like one is let go.
+    YouTubeLoss,
 }
 
 impl Timer {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
     pub const ALL: [Timer; Self::COUNT] = [
         Timer::PauseHide,
         Timer::Reconnect,
         Timer::Handshake,
         Timer::UpdateCheck,
         Timer::CatalogRetry,
+        Timer::YouTubeLoss,
     ];
 
     fn index(self) -> usize {
@@ -46,6 +49,7 @@ impl Timer {
             Timer::Handshake => 2,
             Timer::UpdateCheck => 3,
             Timer::CatalogRetry => 4,
+            Timer::YouTubeLoss => 5,
         }
     }
 }

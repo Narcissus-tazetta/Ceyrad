@@ -7,6 +7,7 @@ A macOS menu bar app that shows the track currently playing in Apple Music as yo
 - Shows title, artist, album art, and a playback progress bar as "Listening to ~"
 - Up to 2 buttons (song / artist / album page, custom URL, repository)
 - **Does nothing when Apple Music isn't running** (no polling — fully event-driven)
+- Optionally shows YouTube Music playing in your browser too, with no browser extension (off by default — see [YouTube Music (browser)](#youtube-music-browser))
 
 ## Requirements
 
@@ -39,9 +40,22 @@ A macOS menu bar app that shows the track currently playing in Apple Music as yo
 | Status Badge | What the compact "Listening to …" badge (member list, DM sidebar, etc.) shows: app name / artist name / track name (default: artist name) |
 | When Paused | Behavior on pause: keep showing / clear immediately / clear after 1, 3, 5, or 10 minutes (default: 5 minutes) |
 | Launch at Login | Automatically start Ceyrad at login (click to toggle on/off) |
+| Detect YouTube Music (browser) | Show YouTube Music playing in a browser (default: off). See [YouTube Music (browser)](#youtube-music-browser) |
 | Language | Switches the display language of the menu (this settings UI) between English / 日本語. Text shown on the Discord side (connection status, button labels, etc.) is not affected and always stays in English |
 | Reconnect to Discord | Retries the connection to Discord |
 | Check for Updates… | Check for and install the latest version via [Sparkle](#auto-update-sparkle) |
+
+## YouTube Music (browser)
+
+Turn on **Detect YouTube Music (browser)** in the menu and Ceyrad also shows YouTube Music playing in a browser, as "Listening to YouTube Music". No browser extension is needed.
+
+- Reads the system-wide "Now Playing" information. Since macOS 15.4 only the system's `/usr/bin/perl` is allowed to read it, so Ceyrad bundles [mediaremote-adapter](https://github.com/ungive/mediaremote-adapter) (BSD-3-Clause) and has `perl` load it. While the option is on, one `perl` process stays resident (about 6 MB, ~0% CPU); while it is off, nothing extra runs.
+- A playing item counts as YouTube Music when it comes from a browser **and** the browser has a `music.youtube.com` tab **and** either the track has an album or its title matches that tab's title. Plain YouTube videos are not shown.
+- Reading the browser's tabs needs Automation permission for that browser ("System Settings > Privacy & Security > Automation"). The menu shows "Browser Control: Not Authorized ⚠️" when it is missing.
+- Supported browsers: Chrome (verified) and Chrome Beta/Dev/Canary, Safari, Edge, Brave, Arc, Vivaldi (same mechanism, not verified). Firefox cannot be inspected and is not supported.
+- Apple Music and YouTube Music share the same status; whichever started playing later is shown, and playing wins over paused. The Discord connection is switched to match, which is why the two show up under different names.
+- The song button points at the YouTube Music tab when it is on a song page (`/watch`); otherwise it is hidden. Artist and album buttons are hidden for YouTube Music. Artwork comes from the same iTunes Search lookup as Apple Music and is missing when the song is not found.
+- If `perl` cannot read Now Playing (Apple closing this path, or running from a plain executable instead of `Ceyrad.app`), the menu says "YouTube Music: Unavailable ⚠️" with the reason.
 
 ## Auto-launch at login (optional)
 
@@ -108,6 +122,8 @@ Requires Xcode Command Line Tools (Swift 5.9+).
 mv Ceyrad.app /Applications/
 ```
 
+`make-app.sh` also builds mediaremote-adapter (pinned commit, fetched from GitHub) and bundles it, so it needs `cmake` (`brew install cmake`).
+
 Building as a `.app` ties the Automation permission to the app itself (avoiding permission issues tied to the launching terminal), and lets it be registered in "Login Items" in System Settings.
 
 If you just want a plain executable, use `swift build -c release` (`.build/release/Ceyrad`). To auto-launch at login via a LaunchAgent, create a plist like the following at `~/Library/LaunchAgents/local.ceyrad.plist`.
@@ -137,7 +153,7 @@ launchctl load ~/Library/LaunchAgents/local.ceyrad.plist
 
 ### Discord Application ID
 
-The Application ID used to connect to Discord is hardcoded in [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) (`SettingsStore.discordClientId`) and is dedicated to this app. The Application *name* is what Discord shows as "Listening to ~" (named **Apple Music**). If you fork this for your own use, create your own Application in the [Discord Developer Portal](https://discord.com/developers/applications) with that name and replace the ID.
+The Application IDs used to connect to Discord are hardcoded in [Sources/Ceyrad/SettingsStore.swift](Sources/Ceyrad/SettingsStore.swift) (`SettingsStore.discordClientId` for Apple Music, `SettingsStore.youtubeMusicClientId` for YouTube Music) and are dedicated to this app. The Application *name* is what Discord shows as "Listening to ~" (named **Apple Music** and **YouTube Music**). If you fork this for your own use, create your own Applications in the [Discord Developer Portal](https://discord.com/developers/applications) with those names and replace the IDs.
 
 ### Tests
 

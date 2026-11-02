@@ -24,6 +24,20 @@
 //! same event the subscription list already depended on, and it is what the
 //! macOS build's `NSWorkspace` launch notification does there.
 //!
+//! # Browsers, once YouTube Music detection is on
+//!
+//! Switching the setting on is the one thing that widens the list above, and it
+//! widens it only to sessions whose AUMID is a recognised browser. What that
+//! adds, while a browser is playing anything: its playback and timeline events
+//! wake the loop like Apple Music's do, and its title and artist are read over
+//! RPC into the browser's process whenever the browser says they moved. That is
+//! why it is opt-in, and why the browser's title flag is kept apart from Apple
+//! Music's: a video changing in a tab must not make Apple Music's player answer
+//! for its own title again.
+//!
+//! A browser session is only reported once it looks like YouTube Music; see
+//! `core::youtube_music`.
+//!
 //! # Why a timeline tick is cheap
 //!
 //! Apple Music for Windows raises `TimelinePropertiesChanged` roughly every
@@ -45,9 +59,10 @@ use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
 };
 
-use crate::core::aumid::{is_apple_music, AumidOverrides};
+use crate::core::aumid::{is_apple_music, is_browser, AumidOverrides};
 use crate::core::models::{PlayerState, TrackInfo};
 use crate::core::track_metadata::split_combined_artist;
+use crate::core::youtube_music::is_youtube_music;
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winrt::join_with_timeout;
 
@@ -89,11 +104,21 @@ pub struct SessionState {
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
     pub apple_music: Option<SessionState>,
+    /// The browser session that looks like YouTube Music. Always `None` while
+    /// browsers are not being watched.
+    pub youtube_music: Option<SessionState>,
     /// AUMIDs that matched no known player, for logging. Every media app on the
     /// machine shows up here — browsers, games, video players — so it is filled
     /// only on a pass that rebuilt the subscriptions, which is when the session
     /// list actually moved, and is empty on every other pass.
     pub unknown_aumids: Vec<String>,
+}
+
+/// What a subscribed session was recognised as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    AppleMusic,
+    Browser,
 }
 
 /// WinRT event registrations are plain `i64` tokens in this binding.
@@ -148,6 +173,7 @@ struct SessionCache {
 /// over — alive for the life of the process.
 struct Subscription {
     session: Session,
+    kind: Kind,
     media: Option<Token>,
     playback: Option<Token>,
     timeline: Option<Token>,
@@ -158,9 +184,10 @@ struct Subscription {
 }
 
 impl Subscription {
-    fn new(session: Session) -> Self {
+    fn new(session: Session, kind: Kind) -> Self {
         Self {
             session,
+            kind,
             media: None,
             playback: None,
             timeline: None,
@@ -193,8 +220,15 @@ pub struct Watcher {
     dirty: Arc<AtomicBool>,
     /// The session list itself changed, so subscriptions must be rebuilt.
     sessions_changed: Arc<AtomicBool>,
-    /// A session said its metadata moved, so the cached titles are stale.
+    /// An Apple Music session said its metadata moved, so its cached titles are
+    /// stale.
     metadata_dirty: Arc<AtomicBool>,
+    /// As `metadata_dirty`, for browser sessions. Separate so that a video
+    /// changing in a tab never costs Apple Music's player a title read.
+    browser_metadata_dirty: Arc<AtomicBool>,
+    /// Whether browser sessions are subscribed to. Off until the user turns
+    /// YouTube Music detection on.
+    watch_browsers: bool,
     subscriptions: Vec<Subscription>,
     /// Sessions the last rebuild did not recognise, handed to the next snapshot
     /// so they are logged once per change rather than once per event.
@@ -219,6 +253,7 @@ impl Watcher {
         let dirty = Arc::new(AtomicBool::new(true));
         let sessions_changed = Arc::new(AtomicBool::new(true));
         let metadata_dirty = Arc::new(AtomicBool::new(true));
+        let browser_metadata_dirty = Arc::new(AtomicBool::new(true));
 
         let token = {
             let dirty = Arc::clone(&dirty);
@@ -239,6 +274,8 @@ impl Watcher {
             dirty,
             sessions_changed,
             metadata_dirty,
+            browser_metadata_dirty,
+            watch_browsers: false,
             subscriptions: Vec::new(),
             unknown_aumids: Vec::new(),
             sessions_token: token,
@@ -248,6 +285,17 @@ impl Watcher {
     /// True when something has changed since the last `take_snapshot`.
     pub fn is_dirty(&self) -> bool {
         self.dirty.load(Ordering::SeqCst)
+    }
+
+    /// Starts or stops watching browser sessions. The subscriptions are rebuilt
+    /// on the next snapshot, which is what actually adds or drops them.
+    pub fn set_watch_browsers(&mut self, enabled: bool) {
+        if self.watch_browsers == enabled {
+            return;
+        }
+        self.watch_browsers = enabled;
+        self.sessions_changed.store(true, Ordering::SeqCst);
+        self.mark_dirty();
     }
 
     /// Asks for a fresh reading even though nothing was reported.
@@ -278,6 +326,7 @@ impl Watcher {
             // the titles away; say so before the read below decides it can
             // reuse something that no longer exists.
             self.metadata_dirty.store(true, Ordering::SeqCst);
+            self.browser_metadata_dirty.store(true, Ordering::SeqCst);
             if let Err(e) = self.resubscribe() {
                 self.sessions_changed.store(true, Ordering::SeqCst);
                 self.dirty.store(true, Ordering::SeqCst);
@@ -288,8 +337,10 @@ impl Watcher {
 
         // Read after the resubscribe above, which is one of the things that
         // sets it.
-        let refresh = self.metadata_dirty.swap(false, Ordering::SeqCst);
-        let mut retry_metadata = false;
+        let refresh_apple = self.metadata_dirty.swap(false, Ordering::SeqCst);
+        let refresh_browser = self.browser_metadata_dirty.swap(false, Ordering::SeqCst);
+        let mut retry_apple = false;
+        let mut retry_browser = false;
 
         let mut snapshot = Snapshot {
             unknown_aumids: std::mem::take(&mut self.unknown_aumids),
@@ -298,11 +349,33 @@ impl Watcher {
         for subscription in &mut self.subscriptions {
             // Destructured so the session can be read while its own cache is
             // written; they are separate fields of the same subscription.
-            let Subscription { session, cache, .. } = subscription;
-            snapshot.apple_music = Some(read_session(session, cache, refresh, &mut retry_metadata));
+            let Subscription {
+                session,
+                cache,
+                kind,
+                ..
+            } = subscription;
+            match kind {
+                Kind::AppleMusic => {
+                    snapshot.apple_music = Some(read_session(
+                        session,
+                        cache,
+                        refresh_apple,
+                        &mut retry_apple,
+                    ));
+                }
+                Kind::Browser => {
+                    let state = read_session(session, cache, refresh_browser, &mut retry_browser);
+                    if looks_like_youtube_music(&state)
+                        && prefer(&state, snapshot.youtube_music.as_ref())
+                    {
+                        snapshot.youtube_music = Some(state);
+                    }
+                }
+            }
         }
 
-        if retry_metadata {
+        if retry_apple || retry_browser {
             // Re-armed, but deliberately without a wake and without re-arming
             // `dirty`: the call that just failed is the one with a one-second
             // deadline, so anything that retries it eagerly spends whole
@@ -311,7 +384,12 @@ impl Watcher {
             // and the retry rides along with that; one that has gone quiet is
             // paused or stopped, and the next thing the user does raises one
             // too. Which is also where the previous code recovered from this.
-            self.metadata_dirty.store(true, Ordering::SeqCst);
+            if retry_apple {
+                self.metadata_dirty.store(true, Ordering::SeqCst);
+            }
+            if retry_browser {
+                self.browser_metadata_dirty.store(true, Ordering::SeqCst);
+            }
         }
         Ok(snapshot)
     }
@@ -328,19 +406,23 @@ impl Watcher {
                 continue;
             };
             let aumid = aumid.to_string();
-            if !is_apple_music(&aumid, &self.overrides) {
+            let kind = if is_apple_music(&aumid, &self.overrides) {
+                Kind::AppleMusic
+            } else if self.watch_browsers && is_browser(&aumid, &self.overrides) {
+                Kind::Browser
+            } else {
                 self.unknown_aumids.push(aumid);
                 continue;
-            }
+            };
 
             // Built in place so that a failure on the second or third
             // registration still unregisters the first: `subscription` is
             // dropped on the way out and hands its tokens back.
-            let mut subscription = Subscription::new(session);
+            let mut subscription = Subscription::new(session, kind);
             subscription.media = Some(
                 subscription
                     .session
-                    .MediaPropertiesChanged(&self.metadata_handler())?,
+                    .MediaPropertiesChanged(&self.metadata_handler(kind))?,
             );
             // Playback and timeline both take the cheap handler. What a
             // playback change means is decided from the status itself, which
@@ -377,15 +459,20 @@ impl Watcher {
         })
     }
 
-    /// As `plain_handler`, and additionally retires the cached titles.
+    /// As `plain_handler`, and additionally retires the cached titles of the
+    /// kind of session it is registered on.
     fn metadata_handler<
         T: windows::core::RuntimeType + 'static,
         U: windows::core::RuntimeType + 'static,
     >(
         &self,
+        kind: Kind,
     ) -> TypedEventHandler<T, U> {
         let dirty = Arc::clone(&self.dirty);
-        let metadata_dirty = Arc::clone(&self.metadata_dirty);
+        let metadata_dirty = match kind {
+            Kind::AppleMusic => Arc::clone(&self.metadata_dirty),
+            Kind::Browser => Arc::clone(&self.browser_metadata_dirty),
+        };
         let wake = Arc::clone(&self.wake);
         TypedEventHandler::new(move |_, _| {
             // The two flags are written here in the opposite order to the one
@@ -402,6 +489,27 @@ impl Watcher {
             let _ = wake.set();
             Ok(())
         })
+    }
+}
+
+/// Whether a browser session's title and album say it is YouTube Music.
+fn looks_like_youtube_music(state: &SessionState) -> bool {
+    state
+        .track
+        .as_ref()
+        .is_some_and(|track| is_youtube_music(true, &track.album, None))
+}
+
+/// Whether `candidate` should replace `current` as the browser session
+/// reported. Two tabs can both be YouTube Music; the one actually playing is
+/// the one worth showing.
+fn prefer(candidate: &SessionState, current: Option<&SessionState>) -> bool {
+    match current {
+        None => true,
+        Some(current) => {
+            candidate.player_state == PlayerState::Playing
+                && current.player_state != PlayerState::Playing
+        }
     }
 }
 

@@ -3,6 +3,7 @@ use crate::t_fmt;
 use super::apple_music;
 use super::i18n::AppLanguage;
 use super::models::{ConnState, MusicState, PlayerState, TrackInfo};
+use super::youtube_music;
 
 /// Values shown as the disabled info rows at the top of the tray menu.
 ///
@@ -16,22 +17,45 @@ use super::models::{ConnState, MusicState, PlayerState, TrackInfo};
 #[derive(Debug, Clone)]
 pub struct Input<'a> {
     pub music: &'a MusicState,
+    /// `None` while YouTube Music detection is off, which leaves its row out
+    /// altogether rather than reporting a state nobody asked to watch.
+    pub youtube_music: Option<&'a MusicState>,
     pub discord_state: ConnState,
     pub language: AppLanguage,
 }
 
 pub fn lines(input: &Input) -> Vec<String> {
-    vec![source_line(input), discord_line(input)]
+    let mut rows = vec![source_line(
+        apple_music::DISPLAY_NAME,
+        input.music,
+        input.language,
+        |name| t_fmt!(input.language, "{name}: Not Running", "{name}: 未起動"),
+    )];
+    if let Some(youtube) = input.youtube_music {
+        rows.push(source_line(
+            youtube_music::DISPLAY_NAME,
+            youtube,
+            input.language,
+            |name| t_fmt!(input.language, "{name}: Not Detected", "{name}: 未検出"),
+        ));
+    }
+    rows.push(discord_line(input));
+    rows
 }
 
-fn source_line(input: &Input) -> String {
-    let name = apple_music::DISPLAY_NAME;
-    let s = input.music;
+/// `absent` words the row for a source that is not there: Apple Music is "not
+/// running", but a browser's media session is merely "not detected".
+fn source_line(
+    name: &str,
+    s: &MusicState,
+    language: AppLanguage,
+    absent: impl FnOnce(&str) -> String,
+) -> String {
     if !s.running {
-        return t_fmt!(input.language, "{name}: Not Running", "{name}: 未起動");
+        return absent(name);
     }
     match s.player_state {
-        PlayerState::Stopped => t_fmt!(input.language, "{name}: Stopped", "{name}: 停止中"),
+        PlayerState::Stopped => t_fmt!(language, "{name}: Stopped", "{name}: 停止中"),
         PlayerState::Playing => format!("♪ {name}: {}", track_line(s.track.as_ref())),
         PlayerState::Paused => format!("⏸ {name}: {}", track_line(s.track.as_ref())),
     }
@@ -39,7 +63,7 @@ fn source_line(input: &Input) -> String {
 
 /// Always English — Discord-facing wording is not localized.
 fn discord_line(input: &Input) -> String {
-    if !input.music.running {
+    if !input.music.running && !input.youtube_music.is_some_and(|youtube| youtube.running) {
         return "Discord: Idle (connects when a player starts)".to_string();
     }
     match input.discord_state {

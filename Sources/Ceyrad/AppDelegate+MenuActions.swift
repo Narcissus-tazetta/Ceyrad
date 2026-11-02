@@ -24,6 +24,14 @@ extension AppDelegate {
             // 変わるのはメニュー自身の文言だけなので、Discordに送り直すものはない
             settings.language = language
 
+        case .toggleYouTubeMusic:
+            settings.youtubeMusicEnabled.toggle()
+            if settings.youtubeMusicEnabled {
+                startYouTubeMusic()
+            } else {
+                stopYouTubeMusic()
+            }
+
         case .reconnect:
             reconnectNow()
 

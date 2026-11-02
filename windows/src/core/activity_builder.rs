@@ -5,6 +5,7 @@ use serde_json::{json, Map, Value};
 use super::format_time::format_time;
 use super::models::{CatalogInfo, PlayerState, TrackInfo};
 use super::settings_model::{BadgeLabelType, ButtonSlot, LinkType, Settings};
+use super::source::Source;
 use super::text;
 
 /// Discord requires string fields to be 2–128 characters.
@@ -18,6 +19,7 @@ const MAX_BUTTON_URL_CHARS: usize = 512;
 const PAD_CHAR: char = '\u{2800}';
 
 pub fn build(
+    source: Source,
     track: &TrackInfo,
     player_state: PlayerState,
     catalog: Option<&CatalogInfo>,
@@ -124,7 +126,7 @@ pub fn build(
         }
     }
 
-    let buttons = build_buttons(catalog, settings);
+    let buttons = build_buttons(source, catalog, settings);
     if !buttons.is_empty() {
         activity.insert("buttons".into(), json!(buttons));
     }
@@ -206,7 +208,7 @@ fn timestamps_equivalent(a: &Value, b: &Value) -> bool {
 }
 
 /// Discord allows at most 2 buttons, labels ≤ 32 chars, urls ≤ 512 chars.
-fn build_buttons(catalog: Option<&CatalogInfo>, settings: &Settings) -> Vec<Value> {
+fn build_buttons(source: Source, catalog: Option<&CatalogInfo>, settings: &Settings) -> Vec<Value> {
     let mut buttons = Vec::new();
     let mut used_urls: Vec<String> = Vec::new();
     // An uncustomized label follows the source that is playing.
@@ -214,6 +216,12 @@ fn build_buttons(catalog: Option<&CatalogInfo>, settings: &Settings) -> Vec<Valu
         let link_type = settings.button_type(slot);
         let label = settings.button_label(slot);
         if link_type == LinkType::Disabled {
+            continue;
+        }
+        // The catalog is Apple Music's, so its artist and album pages are the
+        // wrong place to send someone who was listening on YouTube Music.
+        if source == Source::YouTubeMusic && matches!(link_type, LinkType::Artist | LinkType::Album)
+        {
             continue;
         }
         let Some(url) = resolve_url(link_type, catalog, settings) else {
@@ -224,6 +232,9 @@ fn build_buttons(catalog: Option<&CatalogInfo>, settings: &Settings) -> Vec<Valu
         }
         let label = if label.is_empty() {
             "Link".to_string()
+        } else if link_type == LinkType::Song && label == LinkType::Song.default_label() {
+            // Still the stock wording, so it follows the source being shown.
+            source.song_button_label().to_string()
         } else {
             // Truncated in place: the label is already owned, and the common
             // case — a label well inside the limit — then costs nothing at all.
@@ -335,6 +346,7 @@ mod tests {
 
     fn built(catalog: Option<&CatalogInfo>) -> Map<String, Value> {
         build(
+            Source::AppleMusic,
             &TrackInfo::new("Brand New", "Mrs. GREEN APPLE", "Brand New - Single"),
             PlayerState::Playing,
             catalog,

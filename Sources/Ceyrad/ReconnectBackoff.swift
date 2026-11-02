@@ -15,12 +15,21 @@ final class ReconnectBackoff {
     /// 意図的な切断中で、切断が完了したらバックオフを挟まず即つなぎ直す。
     private var immediate = false
 
+    /// 再接続が予約されていて、まだ実行されていない。
+    ///
+    /// 状態が動くたびに接続を確かめる側（`syncConnection`）は、予約があるあいだは待つ。
+    /// 待たずに繋ぎにいくと、バックオフが何の意味も持たなくなる。
+    var isPending: Bool { work != nil }
+
     /// 次の再接続を予約する。予約済みのものは置き換える。
     func schedule(_ connect: @escaping () -> Void) {
         work?.cancel()
         let delay = min(Self.maxDelay, pow(2.0, Double(attempt)))
         attempt = min(attempt + 1, Self.maxAttempt)
-        let item = DispatchWorkItem(block: connect)
+        let item = DispatchWorkItem { [weak self] in
+            self?.work = nil
+            connect()
+        }
         work = item
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }

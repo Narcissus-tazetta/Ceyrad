@@ -9,6 +9,11 @@
 //!
 //! Anything unrecognised is reported to the caller so it can be logged: that is
 //! how a user on an install we have not seen finds out what to add.
+//!
+//! Browsers are recognised the same way, for YouTube Music. A browser's AUMID is
+//! far less predictable than a music app's: one has been seen reporting an
+//! opaque hex id (see `tests/aumid_tests.rs`), so only the Chromium-family names
+//! below are built in and every other browser comes in through an override.
 
 /// Package-family prefixes, compared case-insensitively.
 const APPLE_MUSIC_PACKAGE_PREFIXES: [&str; 2] = ["appleinc.applemusicwin", "appleinc.itunes"];
@@ -18,16 +23,26 @@ const APPLE_MUSIC_PACKAGE_PREFIXES: [&str; 2] = ["appleinc.applemusicwin", "appl
 /// to Discord as Apple Music, and a wrong presence is worse than a missing one.
 const APPLE_MUSIC_EXECUTABLES: [&str; 2] = ["applemusic.exe", "itunes.exe"];
 
+/// Prefixes of the app-model id Chromium derives for Chrome ("Chrome",
+/// "Chromium", and the channel and per-user variants that extend them): the
+/// browser model id is the install mode's base id plus a per-user suffix, in
+/// `ShellUtil::GetBrowserModelId` and `install_static`.
+///
+/// **Unverified on a real machine:** that Chrome's SMTC session reports this id
+/// rather than something else has not been observed.
+const BROWSER_PACKAGE_PREFIXES: [&str; 2] = ["chrome", "chromium"];
+
 /// Extra AUMIDs supplied at runtime, so an unrecognised install can be made to
 /// work without a rebuild.
 #[derive(Debug, Clone, Default)]
 pub struct AumidOverrides {
     pub apple_music: Vec<String>,
+    pub browsers: Vec<String>,
 }
 
 impl AumidOverrides {
     pub fn is_empty(&self) -> bool {
-        self.apple_music.is_empty()
+        self.apple_music.is_empty() && self.browsers.is_empty()
     }
 }
 
@@ -48,6 +63,21 @@ pub fn is_apple_music(aumid: &str, overrides: &AumidOverrides) -> bool {
             .iter()
             .any(|executable| id.eq_ignore_ascii_case(executable))
         || APPLE_MUSIC_PACKAGE_PREFIXES
+            .iter()
+            .any(|prefix| starts_with_ignore_ascii_case(id, prefix))
+}
+
+/// Whether an SMTC session belongs to a web browser. Only asked once YouTube
+/// Music detection is switched on, so the common case of it being off never
+/// pays for it.
+pub fn is_browser(aumid: &str, overrides: &AumidOverrides) -> bool {
+    let id = aumid.trim();
+    if id.is_empty() {
+        return false;
+    }
+
+    matches_any(id, &overrides.browsers)
+        || BROWSER_PACKAGE_PREFIXES
             .iter()
             .any(|prefix| starts_with_ignore_ascii_case(id, prefix))
 }
