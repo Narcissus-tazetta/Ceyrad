@@ -9,13 +9,9 @@ use std::time::Duration;
 /// one belongs to the Application behind `DISCORD_CLIENT_ID`.
 pub const DISPLAY_NAME: &str = "YouTube Music";
 
-/// Placeholder. Discord shows "Listening to <Application name>", so YouTube
-/// Music needs an Application of its own, named "YouTube Music".
-///
-/// Replace this with the Application ID from the Discord Developer Portal.
-/// Until then Discord refuses the handshake and the connection is retried
-/// with backoff for as long as YouTube Music is the source being shown.
-pub const DISCORD_CLIENT_ID: &str = "000000000000000000";
+/// Discord shows "Listening to <Application name>", so YouTube Music has an
+/// Application of its own, named "YouTube Music".
+pub const DISCORD_CLIENT_ID: &str = "1566818184563269745";
 
 /// Default text of the song button. Discord-facing, so never localized.
 pub const SONG_BUTTON_LABEL: &str = "Play on YouTube Music";

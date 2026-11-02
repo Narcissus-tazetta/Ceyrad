@@ -87,9 +87,8 @@ final class SettingsStore {
     /// ユーザーが変更する必要はないため固定値とする。
     static let discordClientId = "1525381518258606130"
     /// YouTube Music 用の Discord Application ID（Application名: "YouTube Music"）。
-    /// 仮の値。Discord Developer Portal で "YouTube Music" という名前の Application を作り、その ID に差し替える。
-    /// 差し替えるまで、YouTube Music を検知しても Discord は接続を拒否する。
-    static let youtubeMusicClientId = "0000000000000000000"
+    /// 「〜を再生中」の名前はこの Application の名前で決まる。
+    static let youtubeMusicClientId = "1566818184563269745"
     /// Discord RPCの制限。ラベルはここで切ってから送る。
     static let maxLabelCharacters = 32
 
