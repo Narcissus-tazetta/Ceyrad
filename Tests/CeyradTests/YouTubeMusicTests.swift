@@ -8,9 +8,8 @@ final class YouTubeMusicTests: XCTestCase {
     func testKnownBrowsersAreBrowsersAndMusicIsNot() {
         XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "com.google.Chrome"))
         XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "com.apple.Safari"))
+        XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "org.mozilla.firefox"))
         XCTAssertFalse(YouTubeMusic.isBrowser(bundleId: AppleMusic.bundleId))
-        // AppleScriptでタブを読めないブラウザは、タブ確認ができないので対象にしない
-        XCTAssertFalse(YouTubeMusic.isBrowser(bundleId: "org.mozilla.firefox"))
     }
 
     // MARK: - タブ
@@ -46,6 +45,23 @@ final class YouTubeMusicTests: XCTestCase {
         XCTAssertEqual(
             YouTubeMusic.songURL(fromTabs: tabs, trackTitle: "pupa"),
             "https://music.youtube.com/watch?v=aaa")
+    }
+
+    func testStaleTabsGiveASongURLOnlyWhenTheTitleHasCaughtUp() {
+        // Firefox のセッションファイルは遅れて書かれ、曲が替わっても前の曲の URL が残る
+        let stale = [tab("https://music.youtube.com/watch?v=old", "YouTube Music")]
+        XCTAssertNil(YouTubeMusic.songURL(fromTabs: stale, trackTitle: "pupa", requireTitleMatch: true))
+        let caughtUp = [tab("https://music.youtube.com/watch?v=new", "pupa | YouTube Music")]
+        XCTAssertEqual(
+            YouTubeMusic.songURL(fromTabs: caughtUp, trackTitle: "pupa", requireTitleMatch: true),
+            "https://music.youtube.com/watch?v=new")
+    }
+
+    func testThumbnailComesFromTheSongPagesVideo() {
+        XCTAssertEqual(
+            YouTubeMusic.thumbnailURL(songURL: "https://music.youtube.com/watch?v=VbfpW0pbvaU"),
+            "https://i.ytimg.com/vi/VbfpW0pbvaU/mqdefault.jpg")
+        XCTAssertNil(YouTubeMusic.thumbnailURL(songURL: "https://music.youtube.com/watch"))
     }
 
     func testNoSongURLWhenSeveralTabsCannotBeToldApart() {
@@ -143,6 +159,16 @@ final class YouTubeMusicTests: XCTestCase {
         XCTAssertEqual(track.positionSec ?? 0, 3.103, accuracy: 0.001)
         XCTAssertEqual(
             track.positionSampledAt, ISO8601DateFormatter().date(from: "2026-11-02T09:18:46Z"))
+    }
+
+    func testSafariIsReportedByItsParentApplication() throws {
+        let line = """
+            {"type":"data","diff":false,"payload":{"artist":"Mrs. GREEN APPLE","album":"POPS",\
+            "title":"シンデレラ","playing":true,"bundleIdentifier":"com.apple.WebKit.GPU",\
+            "parentApplicationBundleIdentifier":"com.apple.Safari"}}
+            """
+        let payload = try XCTUnwrap(NowPlayingPayload.parse(line: line))
+        XCTAssertEqual(payload.bundleId, "com.apple.Safari")
     }
 
     func testPausedIsPlayingFalse() throws {

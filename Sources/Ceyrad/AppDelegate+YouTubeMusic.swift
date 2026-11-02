@@ -4,7 +4,8 @@ import os
 // MARK: - YouTube Music
 //
 // ブラウザの再生は MediaRemote（`NowPlayingAdapter`）から届く。その中から YouTube Music だけを
-// 取り出す: ブラウザで、アルバム名があり、再生元のブラウザに music.youtube.com のタブがあること。
+// 取り出す: ブラウザで、アルバム名があり、再生元のブラウザに music.youtube.com のタブがあること
+// （またはそのタブのタイトルが曲名と一致すること）。
 
 extension AppDelegate {
     private static let log = Logger(
@@ -37,6 +38,9 @@ extension AppDelegate {
 
     private func resetYouTubeMusic() {
         cancelYouTubeLoss()
+        youtubeTabRetryWork?.cancel()
+        youtubeTabRetryWork = nil
+        youtubeTabRetries = nil
         latestPayload = nil
         youtubeTabVerdict = nil
         youtubeUnavailable = nil
@@ -71,10 +75,15 @@ extension AppDelegate {
             else { return }
             switch result {
             case .success(let tabs):
-                self.youtubeTabVerdict = (payload.identity, tabs)
                 let musicTabs = YouTubeMusic.musicTabs(tabs)
                 let titleMatch = musicTabs.contains {
                     YouTubeMusic.titleMatches($0, trackTitle: payload.title)
+                }
+                // 古いかもしれないタブで「一致しない」と決めつけない。使い回さずに読み直す。
+                if YouTubeMusic.tabsMayBeStale(bundleId: payload.bundleId), !titleMatch {
+                    self.scheduleYouTubeTabRetry(identity: payload.identity)
+                } else {
+                    self.youtubeTabVerdict = (payload.identity, tabs)
                 }
                 // 曲名などは載せない。判定が「なぜそうなったか」だけを残す。
                 Self.log.info(
@@ -83,7 +92,9 @@ extension AppDelegate {
                     tabs=\(tabs.count) musicTabs=\(musicTabs.count) \
                     hasAlbum=\(!payload.album.isEmpty) \
                     titleMatch=\(titleMatch) \
-                    songURL=\(YouTubeMusic.songURL(fromTabs: tabs, trackTitle: payload.title) != nil)
+                    songURL=\(YouTubeMusic.songURL(
+                        fromTabs: tabs, trackTitle: payload.title,
+                        requireTitleMatch: YouTubeMusic.tabsMayBeStale(bundleId: payload.bundleId)) != nil)
                     """)
                 self.applyYouTubeMusic(latest, tabs: tabs)
             case .failure(let failure):
@@ -104,8 +115,30 @@ extension AppDelegate {
         cancelYouTubeLoss()
         handlePlayerUpdate(
             .youtubeMusic, state: payload.playerState, info: payload.trackInfo,
-            pageURL: YouTubeMusic.songURL(fromTabs: tabs, trackTitle: payload.title)
+            pageURL: YouTubeMusic.songURL(
+                fromTabs: tabs, trackTitle: payload.title,
+                requireTitleMatch: YouTubeMusic.tabsMayBeStale(bundleId: payload.bundleId))
         )
+    }
+
+    private func scheduleYouTubeTabRetry(identity: String) {
+        if youtubeTabRetries?.identity != identity {
+            youtubeTabRetryWork?.cancel()
+            youtubeTabRetryWork = nil
+            youtubeTabRetries = (identity, 0)
+        }
+        guard youtubeTabRetryWork == nil, let count = youtubeTabRetries?.count,
+            count < Self.youtubeTabMaxRetries
+        else { return }
+        youtubeTabRetries = (identity, count + 1)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.youtubeTabRetryWork = nil
+            guard let latest = self.latestPayload, latest.identity == identity else { return }
+            self.handleNowPlaying(latest)
+        }
+        youtubeTabRetryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.youtubeTabRetryInterval, execute: work)
     }
 
     /// YouTube Music でなくなった（別の動画に替わった・タブを閉じた）。すぐには消さず、

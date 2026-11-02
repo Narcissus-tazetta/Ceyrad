@@ -287,13 +287,23 @@ macOSだけの補強として、アルバム名が空でも、再生中の曲名
 通常のYouTube動画のタブは別のサフィックスなので一致しない。
 
 - タブは`BrowserTabs`がAppleScriptで読む。新しい曲が来たときだけで、同じ曲のあいだは前回の結果を使い回す。
-  読めるブラウザの許可リストは`YouTubeMusic.browserBundleIds`（Chromium系とSafari。Firefoxは非対応）
+  読めるブラウザの許可リストは`YouTubeMusic.browserBundleIds`（Chromium系・Safari・Firefox）
+- FirefoxはAppleScriptでタブを読めないので、`FirefoxSession`が`Profiles/*/sessionstore-backups/recovery.jsonlz4`
+  （mozlz4: マジック＋展開後サイズ＋フレームなしLZ4ブロック、`COMPRESSION_LZ4_RAW`で展開）を読む。
+  起動中のプロファイルは決まらないので、いちばん新しく書かれたものを使う。同じファイル（更新時刻が同じ）は展開し直さない
+- Firefoxでもアルバム名はページ次第で、読み込み直後の曲では空になり、判定は曲名とタブのタイトルの一致に頼る。ファイルは約15秒おきに書かれ、
+  曲が替わってもしばらく前の曲のタブを指す（実測でタイトルの追従に最大約19秒）。そのため一致しないときは結果を
+  使い回さず、4秒おきに最大8回読み直す。曲ボタンもタイトルが一致したタブからしか取らない（古いURLを出さない）
+- Firefoxのプロファイルは「他のアプリのデータへのアクセス」（`kTCCServiceSystemPolicyAppDataDetailed`）で守られている。
+  macOSはこの許可でダイアログを出さず、拒否して通知だけ出す。拒否はEPERMとして区別し、メニューで「ファイルとフォルダ」へ案内する。
+  ad-hoc署名の開発版では許可がビルドのcdhashに紐づくため、作り直すたびに許可し直しが要る
 - アーティストが空の更新（曲が替わった直後でメタデータが揃う前）は待つ。曲名だけでカタログを引くと別の曲に当たる
 - YouTube Musicでなくなっても2.5秒は消さない。曲替わりでアルバム名が遅れて届くあいだの点滅を防ぐ
 
 ### 表示
 
-- アートワークは、Apple Musicと同じiTunes Search APIの照会で引く
+- アートワークは、Apple Musicと同じiTunes Search APIの照会で引く。見つからない（答えを待つあいだも含む）ときは、曲ページの動画のサムネイル
+  （`i.ytimg.com/vi/<id>/mqdefault.jpg`。320x180で黒帯がなく、どの動画にもある）。曲ページが分からなければ出さない
 - 曲ボタンはタブのURL。複数のタブがあるときは曲名がタイトルと一致するもの。`/watch`以外のページ
   （ホームなど）を開いているときはURLが曲を指さないので出さない
 - アーティスト/アルバムのボタンはApple Musicのページを指すので出さない。曲ボタンの既定ラベルは

@@ -10,13 +10,22 @@ enum YouTubeMusic {
     static let displayName = "YouTube Music"
     static let host = "music.youtube.com"
 
-    /// タブの URL を AppleScript で読めるブラウザ。Firefox はスクリプト対応がなく、タブを確認できない。
-    /// 実機で確かめたのは Chrome だけ。
+    /// Firefox は AppleScript でタブを読めず、セッションのファイルから読む（`FirefoxSession`）。
+    /// そのタブは最大15秒ほど古い。
+    static let firefoxBundleId = "org.mozilla.firefox"
+
+    /// タブの URL を読めるブラウザ。実機で確かめたのは Chrome と Firefox だけ。
     static let browserBundleIds: Set<String> = [
         "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev",
         "com.google.Chrome.canary", "com.apple.Safari", "com.microsoft.edgemac",
         "com.brave.Browser", "company.thebrowser.Browser", "com.vivaldi.Vivaldi",
+        firefoxBundleId,
     ]
+
+    /// 読んだタブが、いま鳴っている曲より前の状態を指していることがあるか。
+    static func tabsMayBeStale(bundleId: String) -> Bool {
+        bundleId == firefoxBundleId
+    }
 
     static func isBrowser(bundleId: String) -> Bool {
         browserBundleIds.contains(bundleId)
@@ -61,9 +70,14 @@ enum YouTubeMusic {
     /// タブが複数あるときは、曲名がタイトルと一致するものを鳴っているタブとみなす。それでも
     /// 決まらないとき、そして `/watch` 以外のページ（ホームや検索）を開いたままのときは、
     /// 再生は続いていてもURLは曲を指さないので「分からない」と答える。
-    static func songURL(fromTabs tabs: [BrowserTab], trackTitle: String) -> String? {
+    ///
+    /// `requireTitleMatch` はタブが古いかもしれないとき用。タブが1つでも、タイトルが曲名と
+    /// 一致しなければ前の曲の URL かもしれないので使わない。
+    static func songURL(
+        fromTabs tabs: [BrowserTab], trackTitle: String, requireTitleMatch: Bool = false
+    ) -> String? {
         var candidates = musicTabs(tabs)
-        if candidates.count > 1 {
+        if candidates.count > 1 || requireTitleMatch {
             candidates = candidates.filter { titleMatches($0, trackTitle: trackTitle) }
         }
         guard candidates.count == 1, let components = URLComponents(string: candidates[0].url),
@@ -77,6 +91,18 @@ enum YouTubeMusic {
         canonical.path = "/watch"
         canonical.queryItems = [URLQueryItem(name: "v", value: id)]
         return canonical.string
+    }
+
+    /// 曲ページの動画のサムネイル。iTunes で曲が見つからないとき（YouTube Music が曲名を
+    /// カタカナにして渡すなど）のアートワークの代わり。
+    ///
+    /// `mqdefault` は 320x180 で、黒帯がなく、どの動画にもある。高解像度の `maxresdefault` /
+    /// `hq720` は古い動画に無いことがあり、無いと Discord は画像なしの表示になる。
+    static func thumbnailURL(songURL: String) -> String? {
+        guard let id = URLComponents(string: songURL)?.queryItems?.first(where: { $0.name == "v" })?.value,
+            !id.isEmpty, let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        else { return nil }
+        return "https://i.ytimg.com/vi/\(encoded)/mqdefault.jpg"
     }
 }
 
@@ -133,7 +159,10 @@ struct NowPlayingPayload: Equatable {
             let payload = envelope["payload"] as? [String: Any]
         else { throw ParseError.unexpectedShape }
 
-        guard let bundleId = payload["bundleIdentifier"] as? String,
+        // Safari は再生を WebKit のヘルパー(com.apple.WebKit.GPU)名義で報告し、本体は親の側に入る。
+        guard
+            let bundleId = payload["parentApplicationBundleIdentifier"] as? String
+                ?? payload["bundleIdentifier"] as? String,
             let title = payload["title"] as? String
         else { return nil }
 

@@ -6,7 +6,8 @@ struct BrowserTab: Equatable {
     var title: String
 }
 
-/// 再生元ブラウザのタブ（URL とタイトル）を AppleScript で読む。
+/// 再生元ブラウザのタブ（URL とタイトル）を AppleScript で読む。Firefox だけはセッションの
+/// ファイル（`FirefoxSession`）から読む。
 ///
 /// 呼ぶのは「新しい曲が来たとき」だけで、定期実行はしない。実行は専用のシリアルキューで行う
 /// （`MusicAppleScript` と同じ理由: NSAppleScript はスレッドセーフでなく、権限ダイアログ待ちで
@@ -18,10 +19,14 @@ enum BrowserTabs {
         case scriptFailed(Int)
         /// URL の一覧とタイトルの一覧の数が合わない。タブの対応が取れないので使わない。
         case mismatchedTabs
+        case firefoxSession(FirefoxSession.Failure)
     }
 
     /// 直近の呼び出しが権限拒否で失敗したか。メニューの警告に使う。メインスレッドからのみ触る。
     private(set) static var notAuthorized = false
+    /// 直近の Firefox の読み取りが「他のアプリのデータへのアクセス」の拒否で失敗したか。
+    /// オートメーションとは別の許可なので、メニューの案内も別にする。メインスレッドからのみ触る。
+    private(set) static var firefoxDataNotAuthorized = false
 
     private static let log = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "Ceyrad", category: "BrowserTabs"
@@ -29,6 +34,8 @@ enum BrowserTabs {
     private static let queue = DispatchQueue(label: "browser-tabs-applescript", qos: .userInitiated)
     /// キューの内側からのみ触る。
     private static var scripts: [String: NSAppleScript] = [:]
+    /// キューの内側からのみ触る。Firefox のファイルは書かれるまで中身が同じなので、展開し直さない。
+    private static var firefoxCache: (file: FirefoxSession.SessionFile, tabs: [BrowserTab])?
 
     /// `bundleId` のブラウザが開いているタブ。completion はメインスレッド。
     ///
@@ -39,10 +46,11 @@ enum BrowserTabs {
         queue.async {
             let result = run(bundleId: bundleId)
             DispatchQueue.main.async {
-                if case .failure(let failure) = result {
-                    notAuthorized = failure == .notAuthorized
+                let failure: Failure? = if case .failure(let failure) = result { failure } else { nil }
+                if bundleId == YouTubeMusic.firefoxBundleId {
+                    firefoxDataNotAuthorized = failure == .firefoxSession(.notAuthorized)
                 } else {
-                    notAuthorized = false
+                    notAuthorized = failure == .notAuthorized
                 }
                 completion(result)
             }
@@ -51,10 +59,14 @@ enum BrowserTabs {
 
     private static func run(bundleId: String) -> Result<[BrowserTab], Failure> {
         precondition(YouTubeMusic.isBrowser(bundleId: bundleId), "未許可のブラウザ: \(bundleId)")
+        if bundleId == YouTubeMusic.firefoxBundleId { return readFirefox() }
+        // Safari のタブにはタイトルを指す `title` がなく、`name` で読む。
+        let titleProperty = bundleId == "com.apple.Safari" ? "name" : "title"
         let script =
             scripts[bundleId]
             ?? NSAppleScript(
-                source: "tell application id \"\(bundleId)\" to get {URL, title} of every tab of every window"
+                source:
+                    "tell application id \"\(bundleId)\" to get {URL, \(titleProperty)} of every tab of every window"
             )
         guard let script else { return .failure(.scriptFailed(0)) }
         scripts[bundleId] = script
@@ -77,6 +89,19 @@ enum BrowserTabs {
         collectStrings(titleList, into: &titles)
         guard urls.count == titles.count else { return .failure(.mismatchedTabs) }
         return .success(zip(urls, titles).map { BrowserTab(url: $0, title: $1) })
+    }
+
+    private static func readFirefox() -> Result<[BrowserTab], Failure> {
+        do {
+            let file = try FirefoxSession.recoveryFile()
+            if let cache = firefoxCache, cache.file == file { return .success(cache.tabs) }
+            let tabs = try FirefoxSession.readTabs(at: file.url)
+            firefoxCache = (file, tabs)
+            return .success(tabs)
+        } catch {
+            log.error("Firefox session unreadable: \(String(describing: error), privacy: .public)")
+            return .failure(.firefoxSession(error))
+        }
     }
 
     /// 「ウィンドウごとのリスト」のリストを、順序を保ったまま1本に潰す。

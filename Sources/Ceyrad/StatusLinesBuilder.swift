@@ -10,6 +10,7 @@ enum StatusLinesBuilder {
         /// 検知が有効なのに取得元が使えないときの理由。
         var youtubeUnavailable: String?
         var browserNotAuthorized = false
+        var firefoxDataNotAuthorized = false
         var discordState: DiscordRPCClient.ConnState = .disconnected
         var language: AppLanguage = .en
     }
@@ -76,6 +77,16 @@ enum StatusLinesBuilder {
                     language,
                     "(System Settings > Privacy > Automation)",
                     "(システム設定 > プライバシーとセキュリティ > オートメーション)"
+                )
+            )
+        }
+        if input.firefoxDataNotAuthorized {
+            lines.append(t(language, "Firefox Data: Not Authorized ⚠️", "Firefox のデータ: 未許可 ⚠️"))
+            lines.append(
+                t(
+                    language,
+                    "(System Settings > Privacy > Files & Folders)",
+                    "(システム設定 > プライバシーとセキュリティ > ファイルとフォルダ)"
                 )
             )
         }

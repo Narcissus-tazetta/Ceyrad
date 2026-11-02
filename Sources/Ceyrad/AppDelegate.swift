@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// YouTube Music でなくなったと見えてから、表示を消すまでの猶予。
     /// 曲が替わる瞬間はアルバム名が遅れて届くため、見えた瞬間に消すと点滅する。
     static let youtubeLossGrace: TimeInterval = 2.5
+    /// Firefox のタブ（セッションのファイル）を読み直す間隔と回数。ファイルは約15秒おきに書かれ、
+    /// 曲が替わってからタイトルが追いつくまで実測で17秒かかった。
+    static let youtubeTabRetryInterval: TimeInterval = 4
+    static let youtubeTabMaxRetries = 8
 
     let settings = SettingsStore.shared
     private let lifecycle = AppLifecycleWatcher()
@@ -45,6 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 同じ曲のあいだ AppleScript を繰り返さないための、直近のタブ確認の結果。
     var youtubeTabVerdict: (identity: String, tabs: [BrowserTab])?
     var youtubeLossWork: DispatchWorkItem?
+    /// タブが古いかもしれない（Firefox）ときの読み直し。何曲目の何回目かを数える。
+    var youtubeTabRetries: (identity: String, count: Int)?
+    var youtubeTabRetryWork: DispatchWorkItem?
 
     /// この接続でDiscordに送った最後の内容。
     ///
@@ -250,8 +257,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var catalog = current.catalog
         if source == .youtubeMusic {
             // アーティスト/アルバムのページはApple Musicのものなので、曲ページ（タブのURL）と
-            // アートワークだけを引き継ぐ。
-            catalog = CatalogInfo(songURL: current.pageURL, artworkURL: current.catalog?.artworkURL)
+            // アートワークだけを引き継ぐ。iTunes で見つからない（まだ答えがない）あいだは動画のサムネイル。
+            catalog = CatalogInfo(
+                songURL: current.pageURL,
+                artworkURL: current.catalog?.artworkURL
+                    ?? current.pageURL.flatMap(YouTubeMusic.thumbnailURL(songURL:)))
         }
         return ActivityBuilder.build(
             track: track, playerState: current.playerState,
@@ -302,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 youtubeEnabled: settings.youtubeMusicEnabled,
                 youtubeUnavailable: youtubeUnavailable,
                 browserNotAuthorized: BrowserTabs.notAuthorized,
+                firefoxDataNotAuthorized: BrowserTabs.firefoxDataNotAuthorized,
                 discordState: rpc.state,
                 language: settings.language
             ),

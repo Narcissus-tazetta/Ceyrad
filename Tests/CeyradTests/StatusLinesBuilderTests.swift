@@ -123,6 +123,16 @@ final class StatusLinesBuilderTests: XCTestCase {
         XCTAssertTrue(lines.contains("Browser Control: Not Authorized ⚠️"))
     }
 
+    /// Firefox はオートメーションではなく「ファイルとフォルダ」の許可なので、案内先が違う。
+    func testFirefoxDataAuthorizationWarningPointsToFilesAndFolders() {
+        var input = youtubeInput()
+        input.firefoxDataNotAuthorized = true
+        let lines = StatusLinesBuilder.lines(input)
+        XCTAssertTrue(lines.contains("Firefox Data: Not Authorized ⚠️"))
+        XCTAssertTrue(lines.contains("(System Settings > Privacy > Files & Folders)"))
+        XCTAssertFalse(lines.contains("Browser Control: Not Authorized ⚠️"))
+    }
+
     /// YouTube Music だけが再生中でも、Discord は「待機」ではなく接続状態を出す。
     func testDiscordIsNotIdleWhileYouTubeMusicPlays() {
         var input = youtubeInput()
