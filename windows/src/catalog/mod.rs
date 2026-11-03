@@ -57,7 +57,13 @@ pub struct Request {
     pub name: String,
     pub artist: String,
     pub album: String,
+    /// Also search the US and JP storefronts when the machine's own has no
+    /// match. Set for sources whose spelling does not follow the region.
+    pub try_other_storefronts: bool,
 }
+
+/// Storefronts tried after the machine's own when a request asks for them.
+const OTHER_STOREFRONTS: [&str; 2] = ["US", "JP"];
 
 /// What the lookup came back with. A miss and a failure look the same to the
 /// user but must not be treated the same: a miss is the final answer for that
@@ -179,33 +185,60 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
         }
         next_allowed = Instant::now() + MIN_REQUEST_INTERVAL;
 
-        let url = itunes::search_url(&request.name, &request.artist, &country);
-        let outcome = match http.get(&url) {
-            Ok(body) => match itunes::parse_response(&body) {
-                Some(response) => {
-                    let found = itunes::pick_best(
-                        &response.results,
-                        &request.name,
-                        &request.artist,
-                        &request.album,
-                    )
-                    .map(itunes::catalog_from);
-
-                    // Only a real answer is cached: a temporary failure must
-                    // not become this track's permanent one.
-                    cache.store(request.key.clone(), found.clone());
-                    Outcome::from_cached(found)
-                }
-                None => {
-                    log("catalog: the search API returned something unparseable");
-                    Outcome::Failed
-                }
+        let storefronts = itunes::storefronts(
+            &country,
+            if request.try_other_storefronts {
+                &OTHER_STOREFRONTS
+            } else {
+                &[]
             },
-            Err(e) => {
-                log(&format!("catalog: lookup failed ({e})"));
-                Outcome::Failed
+        );
+        let mut outcome = Outcome::Missing;
+        for (attempt, storefront) in storefronts.iter().enumerate() {
+            if attempt > 0 {
+                // Each storefront is a request of its own against the same rate
+                // limit, and a newer track is a reason to stop asking about this one.
+                thread::sleep(MIN_REQUEST_INTERVAL);
+                queue.drain_from(&requests);
+                if queue.has_newer() {
+                    outcome = Outcome::Failed;
+                    break;
+                }
+                next_allowed = Instant::now() + MIN_REQUEST_INTERVAL;
             }
-        };
+            let url = itunes::search_url(&request.name, &request.artist, storefront);
+            match http.get(&url) {
+                Ok(body) => match itunes::parse_response(&body) {
+                    Some(response) => {
+                        let found = itunes::pick_best(
+                            &response.results,
+                            &request.name,
+                            &request.artist,
+                            &request.album,
+                        )
+                        .map(itunes::catalog_from);
+                        if found.is_some() || attempt + 1 == storefronts.len() {
+                            // Only a real answer is cached: a temporary failure must
+                            // not become this track's permanent one, and a miss is
+                            // final only once every storefront has been asked.
+                            cache.store(request.key.clone(), found.clone());
+                            outcome = Outcome::from_cached(found);
+                            break;
+                        }
+                    }
+                    None => {
+                        log("catalog: the search API returned something unparseable");
+                        outcome = Outcome::Failed;
+                        break;
+                    }
+                },
+                Err(e) => {
+                    log(&format!("catalog: lookup failed ({e})"));
+                    outcome = Outcome::Failed;
+                    break;
+                }
+            }
+        }
         if outcome == Outcome::Failed {
             // Past the ordinary spacing, so the next attempt — this track's
             // retry or the next track's first look — waits out the backoff

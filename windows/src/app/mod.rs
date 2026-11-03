@@ -748,6 +748,7 @@ impl App {
             name: track.name.clone(),
             artist: track.artist.clone(),
             album: track.album.clone(),
+            try_other_storefronts: source == Source::YouTubeMusic,
         };
         // Logged as it goes out, not only when it comes back: a lookup that
         // was never asked for and one that never answered produce the same

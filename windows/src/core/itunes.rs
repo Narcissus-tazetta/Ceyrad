@@ -55,6 +55,23 @@ pub fn search_url(name: &str, artist: &str, country: &str) -> String {
     )
 }
 
+/// Storefronts to search in order: the machine's own, then `fallbacks` that it
+/// does not already include.
+///
+/// A track's title and artist only match in the spelling its catalog uses
+/// (`Curtain Call` / `Yuuri` in the US, `カーテンコール` / `優里` in JP), so a
+/// source whose spelling need not follow the machine's region — YouTube Music —
+/// asks the other storefronts after the home one misses.
+pub fn storefronts(home: &str, fallbacks: &[&str]) -> Vec<String> {
+    let mut order = vec![home.to_string()];
+    for fallback in fallbacks {
+        if !order.iter().any(|seen| seen.eq_ignore_ascii_case(fallback)) {
+            order.push((*fallback).to_string());
+        }
+    }
+    order
+}
+
 pub fn parse_response(body: &str) -> Option<SearchResponse> {
     serde_json::from_str(body).ok()
 }
@@ -313,6 +330,14 @@ mod tests {
             track_view_url: Some(format!("https://music.apple.com/{track}")),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn storefronts_put_home_first_and_skip_duplicates() {
+        assert_eq!(storefronts("JP", &["US", "JP"]), ["JP", "US"]);
+        assert_eq!(storefronts("DE", &["US", "JP"]), ["DE", "US", "JP"]);
+        assert_eq!(storefronts("us", &["US", "JP"]), ["us", "JP"]);
+        assert_eq!(storefronts("JP", &[]), ["JP"]);
     }
 
     #[test]
