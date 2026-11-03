@@ -48,21 +48,33 @@
 //! thing this module does. Those strings are cached per subscription and reused
 //! until something that can actually have changed them says so.
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use windows::core::BOOL;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession as Session,
     GlobalSystemMediaTransportControlsSessionManager as SessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
 };
+use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, TreeScope_Descendants, UIA_ControlTypePropertyId,
+    UIA_TabItemControlTypeId,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetClassNameW, GetWindowTextW, IsWindowVisible,
+};
 
 use crate::core::aumid::{is_apple_music, is_browser, AumidOverrides};
 use crate::core::models::{PlayerState, TrackInfo};
 use crate::core::track_metadata::split_combined_artist;
-use crate::core::youtube_music::is_youtube_music;
+use crate::core::youtube_music::{is_youtube_music, window_titles_show_youtube_music};
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winrt::join_with_timeout;
 
@@ -492,12 +504,150 @@ impl Watcher {
     }
 }
 
-/// Whether a browser session's title and album say it is YouTube Music.
+/// How long a tab-name lookup is trusted. A hit lives longer because a song
+/// keeps playing for minutes; a miss is retried soon since the tab list may just
+/// not have been ready (a browser that was only now launched).
+const TAB_LOOKUP_HIT_TTL: Duration = Duration::from_secs(30);
+const TAB_LOOKUP_MISS_TTL: Duration = Duration::from_secs(5);
+
+/// Whether a browser session is YouTube Music, cheapest evidence first.
+///
+/// YouTube Music reports no album for the video version of a song, so the album
+/// alone would drop those as plain videos. SMTC carries no URL or tab, which
+/// leaves the browser's own UI as the only other place to look.
 fn looks_like_youtube_music(state: &SessionState) -> bool {
-    state
-        .track
-        .as_ref()
-        .is_some_and(|track| is_youtube_music(true, &track.album, None))
+    let Some(track) = state.track.as_ref() else {
+        return false;
+    };
+    if is_youtube_music(true, &track.album, None) {
+        return true;
+    }
+    if window_titles_show_youtube_music(&track.name, &visible_window_titles()) {
+        return true;
+    }
+    background_tab_is_youtube_music(&track.name)
+}
+
+fn visible_window_titles() -> Vec<String> {
+    top_level_windows(|hwnd| {
+        let mut buf = [0u16; 512];
+        // SAFETY: `buf` outlives the call and the length is taken from it.
+        let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+        (len > 0).then(|| String::from_utf16_lossy(&buf[..len as usize]))
+    })
+}
+
+/// Visible top-level windows mapped through `f`, skipping the `None`s.
+fn top_level_windows<T>(mut f: impl FnMut(HWND) -> Option<T>) -> Vec<T> {
+    struct Ctx<'a, T> {
+        f: &'a mut dyn FnMut(HWND) -> Option<T>,
+        out: Vec<T>,
+    }
+
+    unsafe extern "system" fn visit<T>(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: `lparam` is the `Ctx` passed by `EnumWindows` below, which
+        // does not return until enumeration is over.
+        let ctx = unsafe { &mut *(lparam.0 as *mut Ctx<T>) };
+        // SAFETY: plain query on a handle the system just handed us.
+        if unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            if let Some(item) = (ctx.f)(hwnd) {
+                ctx.out.push(item);
+            }
+        }
+        BOOL(1)
+    }
+
+    let mut ctx = Ctx {
+        f: &mut f,
+        out: Vec::new(),
+    };
+    // SAFETY: `ctx` lives across the call. An enumeration that stops early
+    // leaves a shorter list, which only costs a missed detection.
+    let _ = unsafe { EnumWindows(Some(visit::<T>), LPARAM(&mut ctx as *mut Ctx<T> as isize)) };
+    ctx.out
+}
+
+thread_local! {
+    /// (track name, when looked up, result) of the last tab lookup.
+    static TAB_LOOKUP: RefCell<Option<(String, Instant, bool)>> = const { RefCell::new(None) };
+}
+
+/// The fallback for a YouTube Music tab that is not the window's active one,
+/// where the window title cannot see it. Walking a browser's UI tree is slow,
+/// so the answer is cached per track.
+fn background_tab_is_youtube_music(track_name: &str) -> bool {
+    let name = track_name.trim().to_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    TAB_LOOKUP.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((cached_name, at, found)) = cache.as_ref() {
+            let ttl = if *found {
+                TAB_LOOKUP_HIT_TTL
+            } else {
+                TAB_LOOKUP_MISS_TTL
+            };
+            if *cached_name == name && at.elapsed() < ttl {
+                return *found;
+            }
+        }
+        let found = window_titles_show_youtube_music(&name, &browser_tab_names());
+        *cache = Some((name, Instant::now(), found));
+        found
+    })
+}
+
+/// Names of every tab in every visible browser window, via UI Automation.
+fn browser_tab_names() -> Vec<String> {
+    let browsers = top_level_windows(|hwnd| {
+        let mut buf = [0u16; 64];
+        // SAFETY: `buf` outlives the call and the length is taken from it.
+        let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+        let class = String::from_utf16_lossy(&buf[..len.max(0) as usize]);
+        // Chromium and Firefox families respectively.
+        matches!(class.as_str(), "Chrome_WidgetWin_1" | "MozillaWindowClass").then_some(hwnd)
+    });
+    if browsers.is_empty() {
+        return Vec::new();
+    }
+
+    // COM is initialised by the binaries' `main` on this thread.
+    // SAFETY: standard in-proc activation of the UI Automation client.
+    let Ok(automation) = (unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+    }) else {
+        return Vec::new();
+    };
+    // SAFETY: the VARIANT is built from a plain integer constant.
+    let Ok(condition) = (unsafe {
+        automation.CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            &VARIANT::from(UIA_TabItemControlTypeId.0),
+        )
+    }) else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    for hwnd in browsers {
+        // A window that closed or a browser that refuses automation only costs
+        // its own tab names.
+        // SAFETY: calls into the UIA client with handles and objects created above.
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            continue;
+        };
+        let Ok(tabs) = (unsafe { root.FindAll(TreeScope_Descendants, &condition) }) else {
+            continue;
+        };
+        let count = unsafe { tabs.Length() }.unwrap_or(0);
+        for i in 0..count {
+            if let Ok(name) = unsafe { tabs.GetElement(i).and_then(|tab| tab.CurrentName()) } {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
 }
 
 /// Whether `candidate` should replace `current` as the browser session

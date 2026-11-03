@@ -107,18 +107,24 @@ fn chromium_family_ids_are_browsers() {
 }
 
 #[test]
-fn an_opaque_id_is_not_a_browser_until_it_is_overridden() {
-    // The id seen on a real machine; nothing about its shape says "browser".
-    assert!(!is_browser("F0DC299D809B9700", &none()));
+fn an_opaque_id_of_another_shape_is_a_browser_only_when_overridden() {
+    assert!(!is_browser("0123ABCD", &none()));
     assert!(!is_browser("", &none()));
     assert!(!is_browser("   ", &none()));
 
     let overrides = AumidOverrides {
-        browsers: vec!["F0DC299D809B9700".into()],
+        browsers: vec!["0123ABCD".into()],
         ..Default::default()
     };
-    assert!(is_browser("F0DC299D809B9700", &overrides));
-    assert!(!is_apple_music("F0DC299D809B9700", &overrides));
+    assert!(is_browser("0123ABCD", &overrides));
+    assert!(!is_apple_music("0123ABCD", &overrides));
+}
+
+#[test]
+fn a_firefox_family_hash_id_is_a_browser() {
+    assert!(is_browser("F0DC299D809B9700", &none()));
+    assert!(!is_browser("F0DC299D809B97", &none()));
+    assert!(!is_browser("ZZDC299D809B9700", &none()));
 }
 
 #[test]

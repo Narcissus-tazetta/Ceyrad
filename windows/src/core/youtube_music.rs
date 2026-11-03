@@ -36,3 +36,56 @@ pub fn is_youtube_music(
 ) -> bool {
     is_browser && !album.trim().is_empty() && has_youtube_music_tab.unwrap_or(true)
 }
+
+/// Whether any browser window title shows `track_name` on a YouTube Music page.
+///
+/// The fallback for tracks that report no album (YouTube Music's video versions
+/// do). Window titles only expose a window's active tab; requiring the track
+/// name keeps an unrelated YouTube Music tab from claiming a plain video.
+pub fn window_titles_show_youtube_music<S: AsRef<str>>(track_name: &str, titles: &[S]) -> bool {
+    let name = track_name.trim().to_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    titles.iter().any(|title| {
+        let title = title.as_ref().to_lowercase();
+        title.contains("youtube music") && title.contains(&name)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_youtube_music_title_with_the_track_matches() {
+        assert!(window_titles_show_youtube_music(
+            "夜の踊り子",
+            &["夜の踊り子 - YouTube Music - Google Chrome"]
+        ));
+    }
+
+    #[test]
+    fn a_plain_youtube_title_does_not_match() {
+        assert!(!window_titles_show_youtube_music(
+            "夜の踊り子",
+            &["夜の踊り子 - YouTube - Google Chrome"]
+        ));
+    }
+
+    #[test]
+    fn another_track_does_not_match() {
+        assert!(!window_titles_show_youtube_music(
+            "夜の踊り子",
+            &["別の曲 - YouTube Music - Google Chrome"]
+        ));
+    }
+
+    #[test]
+    fn an_empty_track_name_never_matches() {
+        assert!(!window_titles_show_youtube_music(
+            "  ",
+            &["YouTube Music - Google Chrome"]
+        ));
+    }
+}

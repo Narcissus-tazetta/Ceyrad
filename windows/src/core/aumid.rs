@@ -11,9 +11,10 @@
 //! how a user on an install we have not seen finds out what to add.
 //!
 //! Browsers are recognised the same way, for YouTube Music. A browser's AUMID is
-//! far less predictable than a music app's: one has been seen reporting an
-//! opaque hex id (see `tests/aumid_tests.rs`), so only the Chromium-family names
-//! below are built in and every other browser comes in through an override.
+//! far less predictable than a music app's: Firefox-family browsers
+//! report an opaque 16-digit hex id (see `tests/aumid_tests.rs`), recognised by
+//! shape; the Chromium-family names below are built in and anything else comes
+//! in through an override.
 
 /// Package-family prefixes, compared case-insensitively.
 const APPLE_MUSIC_PACKAGE_PREFIXES: [&str; 2] = ["appleinc.applemusicwin", "appleinc.itunes"];
@@ -30,11 +31,11 @@ const APPLE_MUSIC_EXECUTABLES: [&str; 2] = ["applemusic.exe", "itunes.exe"];
 ///
 /// Edge, Brave, Vivaldi and Opera build on the same install_static code with
 /// their own base ids. Firefox is absent on purpose: its id is an opaque hash of
-/// the install path (as in the `F0DC299D809B9700` case in the tests), so it can
-/// only be matched through `AumidOverrides::browsers`.
+/// the install path (as in the `F0DC299D809B9700` case in the tests), so it is
+/// matched by shape in `is_firefox_family_id` instead.
 ///
-/// **Unverified on a real machine:** that any of these browsers' SMTC sessions
-/// report these ids rather than something else has not been observed.
+/// **Verified on a real machine:** Edge and Chrome. Brave, Vivaldi and Opera are
+/// unobserved.
 const BROWSER_PACKAGE_PREFIXES: [&str; 6] =
     ["chrome", "chromium", "msedge", "brave", "vivaldi", "opera"];
 
@@ -86,6 +87,17 @@ pub fn is_browser(aumid: &str, overrides: &AumidOverrides) -> bool {
         || BROWSER_PACKAGE_PREFIXES
             .iter()
             .any(|prefix| starts_with_ignore_ascii_case(id, prefix))
+        || is_firefox_family_id(id)
+}
+
+/// Firefox and its forks (Zen, Floorp, ...) report a 16-digit hex hash of the
+/// install path. Another app sharing that shape is harmless: a session is only
+/// shown as YouTube Music when its track also matches a YouTube Music tab.
+fn is_firefox_family_id(id: &str) -> bool {
+    id.len() == 16
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
 }
 
 /// An override matches either exactly or as a prefix, so a user can paste
