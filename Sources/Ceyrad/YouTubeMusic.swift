@@ -10,25 +10,45 @@ enum YouTubeMusic {
     static let displayName = "YouTube Music"
     static let host = "music.youtube.com"
 
-    /// Firefox は AppleScript でタブを読めず、セッションのファイルから読む（`FirefoxSession`）。
-    /// そのタブは最大15秒ほど古い。
-    static let firefoxBundleId = "org.mozilla.firefox"
-
-    /// タブの URL を読めるブラウザ。実機で確かめたのは Chrome と Firefox だけ。
-    static let browserBundleIds: Set<String> = [
-        "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev",
-        "com.google.Chrome.canary", "com.apple.Safari", "com.microsoft.edgemac",
-        "com.brave.Browser", "company.thebrowser.Browser", "com.vivaldi.Vivaldi",
-        firefoxBundleId,
+    /// Firefox 系は AppleScript でタブを読めず、セッションのファイルから読む（`FirefoxSession`）。
+    /// そのタブは最大15秒ほど古い。値は `~/Library/Application Support` 以下のプロファイル置き場。
+    /// Developer Edition と Nightly は Firefox と同じ置き場を使う。
+    /// 実機で確かめたのは Firefox と Zen だけで、ほかは公開されている配置からの推定。
+    static let firefoxProfileDirectories: [String: String] = [
+        "org.mozilla.firefox": "Firefox/Profiles",
+        "org.mozilla.firefoxdeveloperedition": "Firefox/Profiles",
+        "org.mozilla.nightly": "Firefox/Profiles",
+        "app.zen-browser.zen": "zen/Profiles",
+        "one.ablaze.floorp": "Floorp/Profiles",
+        "io.gitlab.librewolf-community": "LibreWolf/Profiles",
+        "net.waterfox.waterfox": "Waterfox/Profiles",
     ]
+
+    /// AppleScript でタブを読めるブラウザ。実機で確かめたのは Chrome・Edge・Brave・Vivaldi・Opera で、ほかは同じ辞書を持つ前提。
+    /// Safari 系だけタブのタイトルを `name` で読む。
+    static let safariBundleIds: Set<String> = ["com.apple.Safari", "com.apple.SafariTechnologyPreview"]
+    static let appleScriptBrowserBundleIds: Set<String> = safariBundleIds.union([
+        "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev",
+        "com.google.Chrome.canary", "org.chromium.Chromium",
+        "com.microsoft.edgemac", "com.microsoft.edgemac.Beta", "com.microsoft.edgemac.Dev",
+        "com.microsoft.edgemac.Canary",
+        "com.brave.Browser", "com.brave.Browser.beta", "com.brave.Browser.dev",
+        "com.brave.Browser.nightly",
+        "company.thebrowser.Browser", "com.vivaldi.Vivaldi",
+        "com.operasoftware.Opera", "com.operasoftware.OperaGX",
+    ])
+
+    static func isFirefoxFamily(bundleId: String) -> Bool {
+        firefoxProfileDirectories[bundleId] != nil
+    }
 
     /// 読んだタブが、いま鳴っている曲より前の状態を指していることがあるか。
     static func tabsMayBeStale(bundleId: String) -> Bool {
-        bundleId == firefoxBundleId
+        isFirefoxFamily(bundleId: bundleId)
     }
 
     static func isBrowser(bundleId: String) -> Bool {
-        browserBundleIds.contains(bundleId)
+        appleScriptBrowserBundleIds.contains(bundleId) || isFirefoxFamily(bundleId: bundleId)
     }
 
     /// `hasYouTubeMusicTab` が `nil` なら、そのOSにタブ確認の手段がないものとしてアルバムだけで決める。

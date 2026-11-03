@@ -47,7 +47,7 @@ enum BrowserTabs {
             let result = run(bundleId: bundleId)
             DispatchQueue.main.async {
                 let failure: Failure? = if case .failure(let failure) = result { failure } else { nil }
-                if bundleId == YouTubeMusic.firefoxBundleId {
+                if YouTubeMusic.isFirefoxFamily(bundleId: bundleId) {
                     firefoxDataNotAuthorized = failure == .firefoxSession(.notAuthorized)
                 } else {
                     notAuthorized = failure == .notAuthorized
@@ -59,9 +59,9 @@ enum BrowserTabs {
 
     private static func run(bundleId: String) -> Result<[BrowserTab], Failure> {
         precondition(YouTubeMusic.isBrowser(bundleId: bundleId), "未許可のブラウザ: \(bundleId)")
-        if bundleId == YouTubeMusic.firefoxBundleId { return readFirefox() }
+        if YouTubeMusic.isFirefoxFamily(bundleId: bundleId) { return readFirefox(bundleId: bundleId) }
         // Safari のタブにはタイトルを指す `title` がなく、`name` で読む。
-        let titleProperty = bundleId == "com.apple.Safari" ? "name" : "title"
+        let titleProperty = YouTubeMusic.safariBundleIds.contains(bundleId) ? "name" : "title"
         let script =
             scripts[bundleId]
             ?? NSAppleScript(
@@ -91,9 +91,10 @@ enum BrowserTabs {
         return .success(zip(urls, titles).map { BrowserTab(url: $0, title: $1) })
     }
 
-    private static func readFirefox() -> Result<[BrowserTab], Failure> {
+    private static func readFirefox(bundleId: String) -> Result<[BrowserTab], Failure> {
         do {
-            let file = try FirefoxSession.recoveryFile()
+            let file = try FirefoxSession.recoveryFile(
+                profilesPath: YouTubeMusic.firefoxProfileDirectories[bundleId]!)
             if let cache = firefoxCache, cache.file == file { return .success(cache.tabs) }
             let tabs = try FirefoxSession.readTabs(at: file.url)
             firefoxCache = (file, tabs)

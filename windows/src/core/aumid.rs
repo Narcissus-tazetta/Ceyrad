@@ -28,9 +28,15 @@ const APPLE_MUSIC_EXECUTABLES: [&str; 2] = ["applemusic.exe", "itunes.exe"];
 /// browser model id is the install mode's base id plus a per-user suffix, in
 /// `ShellUtil::GetBrowserModelId` and `install_static`.
 ///
-/// **Unverified on a real machine:** that Chrome's SMTC session reports this id
-/// rather than something else has not been observed.
-const BROWSER_PACKAGE_PREFIXES: [&str; 2] = ["chrome", "chromium"];
+/// Edge, Brave, Vivaldi and Opera build on the same install_static code with
+/// their own base ids. Firefox is absent on purpose: its id is an opaque hash of
+/// the install path (as in the `F0DC299D809B9700` case in the tests), so it can
+/// only be matched through `AumidOverrides::browsers`.
+///
+/// **Unverified on a real machine:** that any of these browsers' SMTC sessions
+/// report these ids rather than something else has not been observed.
+const BROWSER_PACKAGE_PREFIXES: [&str; 6] =
+    ["chrome", "chromium", "msedge", "brave", "vivaldi", "opera"];
 
 /// Extra AUMIDs supplied at runtime, so an unrecognised install can be made to
 /// work without a rebuild.

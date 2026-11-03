@@ -18,6 +18,15 @@ final class ITunesSearchClient {
         let artworkUrl100: String?
     }
 
+    /// 1曲ぶんの検索。ストアを順に引き直すあいだ持ち回る。
+    private struct Query {
+        let key: String
+        let name: String
+        let artist: String
+        let album: String
+        let generation: Int
+    }
+
     private let queue = DispatchQueue(label: "itunes-search")
     // 見つからなかった結果（ローカル取り込み曲など）もキャッシュして再検索の連発を防ぐ
     private var cache: [String: CatalogInfo?] = [:]
@@ -28,6 +37,9 @@ final class ITunesSearchClient {
     private let minRequestInterval: TimeInterval = 3.0
     // レート制限待ちの検索。曲が変わったら古い検索は破棄する（曲送り連打対策）
     private var pendingSearch: DispatchWorkItem?
+    // 曲が変わるたびに増やす。見つからなかった検索を別のストアで続ける途中で曲が変わったら、
+    // その続きは捨てる（pendingSearch と同じ「古い検索は破棄」を、実行中の連鎖にも効かせる）
+    private var searchGeneration = 0
     private let session: URLSession
 
     init() {
@@ -43,11 +55,20 @@ final class ITunesSearchClient {
     /// 確定した答えなので呼び出し側は訊き直さないが、「訊けなかった」（オフライン等）は
     /// 答えではないので再試行に値する——この2つを`nil`ひとつに潰すと、一時的な回線断が
     /// その曲のアートワークを永久に失わせることになる。
+    ///
+    /// `fallbackStorefronts` は、地域のストアで見つからないときに続けて引くストア。曲名・アーティスト名は
+    /// ストアごとの表記（`Curtain Call`/`Yuuri` と `カーテンコール`/`優里` など）でしか一致しないので、
+    /// 再生元の表記が地域のストアと違いうるとき（YouTube Music）だけ渡す。
     func resolve(
-        name: String, artist: String, album: String,
+        name: String, artist: String, album: String, fallbackStorefronts: [String] = [],
         completion: @escaping (CatalogOutcome) -> Void
     ) {
-        let key = [name, artist, album].joined(separator: "\u{1F}").lowercased()
+        let region = Locale.current.region?.identifier ?? "US"
+        let storefronts = ([region] + fallbackStorefronts).reduce(into: [String]()) {
+            if !$0.contains($1) { $0.append($1) }
+        }
+        let key = ([name, artist, album] + [storefronts.joined(separator: ",")])
+            .joined(separator: "\u{1F}").lowercased()
         queue.async { [weak self] in
             guard let self else { return }
             if let cached = self.cache[key] {
@@ -58,10 +79,13 @@ final class ITunesSearchClient {
             // 新しい曲のリクエストで、まだ実行されていない古い検索を置き換える。
             // 破棄した分はレート制限の枠を消費しない（枠の確保は実行時に行う）。
             self.pendingSearch?.cancel()
+            self.searchGeneration += 1
+            let generation = self.searchGeneration
             let work = DispatchWorkItem { [weak self] in
                 self?.performSearch(
-                    key: key, name: name, artist: artist, album: album,
-                    completion: completion
+                    Query(
+                        key: key, name: name, artist: artist, album: album, generation: generation),
+                    storefronts: storefronts[...], completion: completion
                 )
             }
             self.pendingSearch = work
@@ -71,9 +95,11 @@ final class ITunesSearchClient {
     }
 
     private func performSearch(
-        key: String, name: String, artist: String, album: String,
+        _ query: Query, storefronts: ArraySlice<String>,
         completion: @escaping (CatalogOutcome) -> Void
     ) {
+        let (key, name, artist, album) = (query.key, query.name, query.artist, query.album)
+        guard let storefront = storefronts.first else { return }
         nextAllowedRequest = Date().addingTimeInterval(minRequestInterval)
         var components = URLComponents(string: "https://itunes.apple.com/search")!
         components.queryItems = [
@@ -82,7 +108,7 @@ final class ITunesSearchClient {
             URLQueryItem(name: "media", value: "music"),
             URLQueryItem(name: "entity", value: "song"),
             URLQueryItem(name: "limit", value: "10"),
-            URLQueryItem(name: "country", value: Locale.current.region?.identifier ?? "US"),
+            URLQueryItem(name: "country", value: storefront),
         ]
         guard let url = components.url else {
             DispatchQueue.main.async { completion(.failed) }
@@ -109,7 +135,21 @@ final class ITunesSearchClient {
                         .replacingOccurrences(of: "100x100bb", with: "512x512bb")
                 )
             }
-            self.queue.async {
+            self.queue.async { [weak self] in
+                guard let self else { return }
+                // 見つからなかったら次のストアで引き直す。「見つからなかった」を確定させるのは全部引いたあと
+                if info == nil, storefronts.count > 1 {
+                    guard query.generation == self.searchGeneration else { return }
+                    let next = DispatchWorkItem { [weak self] in
+                        self?.performSearch(
+                            query, storefronts: storefronts.dropFirst(), completion: completion)
+                    }
+                    self.pendingSearch = next
+                    self.queue.asyncAfter(
+                        deadline: .now() + max(0, self.nextAllowedRequest.timeIntervalSinceNow),
+                        execute: next)
+                    return
+                }
                 // ネットワークエラー時はここに来ない（一時的なオフラインを恒久化しない）
                 self.store(key: key, info: info)
                 let outcome = info.map(CatalogOutcome.found) ?? .missing

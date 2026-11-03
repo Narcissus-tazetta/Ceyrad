@@ -9,6 +9,9 @@ final class YouTubeMusicTests: XCTestCase {
         XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "com.google.Chrome"))
         XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "com.apple.Safari"))
         XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "org.mozilla.firefox"))
+        XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "app.zen-browser.zen"))
+        XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "com.operasoftware.Opera"))
+        XCTAssertTrue(YouTubeMusic.isBrowser(bundleId: "com.microsoft.edgemac.Beta"))
         XCTAssertFalse(YouTubeMusic.isBrowser(bundleId: AppleMusic.bundleId))
     }
 

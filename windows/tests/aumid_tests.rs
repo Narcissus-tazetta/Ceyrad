@@ -97,6 +97,10 @@ fn chromium_family_ids_are_browsers() {
         "ChromeBeta",
         "chrome.exe",
         "Chromium",
+        "MSEdge",
+        "Brave",
+        "Vivaldi",
+        "Opera",
     ] {
         assert!(is_browser(id, &none()), "{id} should match");
     }

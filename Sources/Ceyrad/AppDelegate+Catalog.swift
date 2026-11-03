@@ -21,7 +21,8 @@ extension AppDelegate {
             $0.catalogRetryAt = nil
         }
         itunes.resolve(
-            name: track.name, artist: track.artist, album: track.album
+            name: track.name, artist: track.artist, album: track.album,
+            fallbackStorefronts: source == .youtubeMusic ? ["US", "JP"] : []
         ) { [weak self] outcome in
             self?.applyCatalog(source, target: track, outcome: outcome)
         }

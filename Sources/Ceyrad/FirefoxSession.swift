@@ -1,7 +1,7 @@
 import Compression
 import Foundation
 
-/// Firefox が書き出すセッションの復元用ファイル（`recovery.jsonlz4`）からタブを読む。
+/// Firefox（と Zen など同じ系統のブラウザ）が書き出すセッションの復元用ファイル（`recovery.jsonlz4`）からタブを読む。
 ///
 /// Firefox は AppleScript でタブを読めないので、これが唯一の手がかりになる。ファイルは
 /// 約15秒おきに書かれるため、曲が替わってもしばらくは前の曲のタブ（URL・タイトル）を指す。
@@ -19,10 +19,6 @@ enum FirefoxSession {
         case unexpectedJSON
     }
 
-    private static let profilesDirectory = FileManager.default
-        .homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Firefox/Profiles", isDirectory: true)
-
     struct SessionFile: Equatable {
         var url: URL
         var modified: Date
@@ -30,7 +26,10 @@ enum FirefoxSession {
 
     /// 起動中の Firefox が使っているプロファイルのファイル。どのプロファイルが起動中かは
     /// profiles.ini からは決まらない（起動時に選べる）ので、いちばん新しく書かれたものとみなす。
-    static func recoveryFile() throws(Failure) -> SessionFile {
+    static func recoveryFile(profilesPath: String) throws(Failure) -> SessionFile {
+        let profilesDirectory = FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/\(profilesPath)", isDirectory: true)
         let profiles: [URL]
         do {
             profiles = try FileManager.default.contentsOfDirectory(

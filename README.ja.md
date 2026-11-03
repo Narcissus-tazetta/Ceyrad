@@ -52,7 +52,7 @@ Apple Musicで再生中の曲をDiscordのステータス（Rich Presence）に�
 - システム全体の「いま再生中」の情報を読む。macOS 15.4以降はシステムの`/usr/bin/perl`だけが読めるため、[mediaremote-adapter](https://github.com/ungive/mediaremote-adapter)（BSD-3-Clause）を同梱し、`perl`に読み込ませている。オンの間は`perl`が1プロセス常駐する（約6MB・CPUはほぼ0%）。オフの間は何も追加で動かない。
 - 再生元が**ブラウザ**で、そのブラウザに`music.youtube.com`の**タブがあり**、**かつ**曲にアルバム名が付いているか、曲名がそのタブのタイトルと一致するときにYouTube Musicとみなす。通常のYouTube動画は表示しない。
 - ブラウザのタブを読むため、そのブラウザへのオートメーション権限が必要（「システム設定 > プライバシーとセキュリティ > オートメーション」）。未許可のときはメニューに「Browser Control: Not Authorized ⚠️」と出る。
-- 対応ブラウザ: Chrome・Firefox（動作確認済み）、Chrome Beta/Dev/Canary・Safari・Edge・Brave・Arc・Vivaldi（同じ仕組み・未確認）。
+- 対応ブラウザ: Chrome・Firefox・Zen・Edge・Brave・Vivaldi・Opera（動作確認済み）。同じ仕組みで未確認: Chromium、Chrome/Edge/Brave の Beta/Dev/Canary/Nightly、Safari（Technology Preview 含む）、Arc、Opera GX、Firefox 系のうち Firefox と Zen 以外（Developer Edition・Nightly・Floorp・LibreWolf・Waterfox）。Zen などの Firefox 系は Firefox と同じくセッションファイルから読むので、「ファイルとフォルダ」で該当ブラウザの項目をオンにする。
 - Firefoxはオートメーションでタブを読めないため、Firefoxが書き出すセッションの復元用ファイルから読む。macOSはこれを「他のアプリのデータへのアクセス」として扱い、最初は確認なしでブロックして通知だけ出す。「システム設定 > プライバシーとセキュリティ > ファイルとフォルダ」でCeyradの「Firefox」をオンにする。未許可のときはメニューに「Firefox Data: Not Authorized ⚠️」と出る。
 - Firefoxはこのファイルを約15秒おきにしか書かないため、曲が替わってから表示されるまで最大20秒ほどかかる。プライベートウィンドウでの再生は検知できない。
 - Apple MusicとYouTube Musicは同じステータスを共有する。後から再生を始めた方を表示し、再生中は一時停止より優先する。表示するソースに合わせてDiscordへの接続も切り替わるため、2つは別の名前で表示される。

@@ -287,8 +287,8 @@ macOSだけの補強として、アルバム名が空でも、再生中の曲名
 通常のYouTube動画のタブは別のサフィックスなので一致しない。
 
 - タブは`BrowserTabs`がAppleScriptで読む。新しい曲が来たときだけで、同じ曲のあいだは前回の結果を使い回す。
-  読めるブラウザの許可リストは`YouTubeMusic.browserBundleIds`（Chromium系・Safari・Firefox）
-- FirefoxはAppleScriptでタブを読めないので、`FirefoxSession`が`Profiles/*/sessionstore-backups/recovery.jsonlz4`
+  読めるブラウザの許可リストは`YouTubeMusic.appleScriptBrowserBundleIds`（Chromium系・Safari系）と`firefoxProfileDirectories`（Firefox系）
+- Firefox系（Firefox・Zen・Floorp・LibreWolf・Waterfoxなど）はAppleScriptでタブを読めないので、`FirefoxSession`がブラウザごとの`Profiles/*/sessionstore-backups/recovery.jsonlz4`
   （mozlz4: マジック＋展開後サイズ＋フレームなしLZ4ブロック、`COMPRESSION_LZ4_RAW`で展開）を読む。
   起動中のプロファイルは決まらないので、いちばん新しく書かれたものを使う。同じファイル（更新時刻が同じ）は展開し直さない
 - Firefoxでもアルバム名はページ次第で、読み込み直後の曲では空になり、判定は曲名とタブのタイトルの一致に頼る。ファイルは約15秒おきに書かれ、
