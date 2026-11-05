@@ -11,7 +11,7 @@ the macOS menu can do is in its menu too.
 | `src/core/` — activity payload, source selection, settings, debounce, status lines, AUMID matching, iTunes matching, change detection, menu rows, tray glyph, update comparison | Ported from Swift |
 | `src/discord/` — IPC framing, named-pipe transport, connection state machine | Done |
 | `src/smtc/` — session watcher | Done |
-| `src/catalog/` — iTunes Search lookup, on a thread of its own | Done |
+| `src/catalog/` — iTunes Search and YouTube Music search lookup, on a thread of its own | Done |
 | `src/winhttp/` — blocking HTTP with a deadline, shared by the lookups | Done |
 | `src/app/` — orchestrator, settings file | Done |
 | `src/tray/` — notification-area icon, menu, dialogs | Done |
@@ -176,7 +176,7 @@ If you find the real id for a stock install, it belongs in
 
 **Detect YouTube Music (browser)** in the menu (off by default) also shows YouTube Music playing in a browser. With it off, browser sessions are not subscribed to at all, so the cost above does not change.
 
-A browser session counts as YouTube Music when the track reports an album. YouTube Music's video versions of songs report no album, so those are recognised by the track name appearing in a browser window title or tab name (read through UI Automation, cached per track) together with "YouTube Music". Plain YouTube videos are not shown. Firefox-family browsers (Firefox, Zen, Floorp) are recognised by their 16-digit hex AUMID. Artwork comes from the iTunes lookup, which also tries the US and JP storefronts when the machine's own has no match (YouTube Music's title and artist spelling can differ from the region's catalog), and there are no buttons (the song page is not known).
+A browser session counts as YouTube Music when the track reports an album. YouTube Music's video versions of songs report no album, so those are recognised by the track name appearing in a browser window title or tab name (read through UI Automation, cached per track) together with "YouTube Music". Plain YouTube videos are not shown. Firefox-family browsers (Firefox, Zen, Floorp) are recognised by their 16-digit hex AUMID. Artwork and the song button come from YouTube Music's own search (the endpoint its web client calls; no key), which knows new releases and YouTube-only uploads and links the button to `music.youtube.com`. It is searched in the language the track's script suggests, then the menu language, then English, since artist spellings follow the request language. When it has no match, artwork falls back to the iTunes lookup across the machine's storefront plus US and JP, with no song button (the Apple Music page would be the wrong service). The artist and album buttons are not shown for YouTube Music.
 
 Browsers are recognised by their AUMID. The `Chrome`, `Chromium`, `MSEdge`, `Brave`, `Vivaldi` and `Opera` family ids are built in, and that is unverified on a real machine. Firefox and its forks (Zen and others) report an opaque hash of the install path, so they are never recognised by name; for them and for anything else, copy the id from the `smtc: ignoring unrecognised session` log line into `CEYRAD_AUMID_BROWSER` (comma-separated, prefixes work).
 

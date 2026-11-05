@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::log;
-use crate::core::itunes;
+use crate::core::{itunes, ytmusic};
 use crate::core::models::CatalogInfo;
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winhttp::{ComApartment, Http};
@@ -57,9 +57,14 @@ pub struct Request {
     pub name: String,
     pub artist: String,
     pub album: String,
-    /// Also search the US and JP storefronts when the machine's own has no
-    /// match. Set for sources whose spelling does not follow the region.
-    pub try_other_storefronts: bool,
+    pub duration_sec: Option<f64>,
+    /// The track is playing on YouTube Music: search YouTube Music itself
+    /// first, and fall back to iTunes across the US and JP storefronts too,
+    /// since its spelling does not follow the machine's region.
+    pub youtube_music: bool,
+    /// The app's menu language (`en` / `ja`), a hint at the language the
+    /// user's YouTube Music is in.
+    pub app_language: &'static str,
 }
 
 /// Storefronts tried after the machine's own when a request asks for them.
@@ -164,9 +169,32 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
         let Some(request) = queue.pop() else {
             continue;
         };
-        if let Some(catalog) = cache.get(&request.key) {
+        let cache_key = cache_key(&request);
+        if let Some(catalog) = cache.get(&cache_key) {
             send(&results, &wake, &request, Outcome::from_cached(catalog));
             continue;
+        }
+
+        // YouTube Music's own search first: it is not under the iTunes rate
+        // limit, so a hit here never waits for one.
+        let mut youtube_music_failed = false;
+        if request.youtube_music {
+            match youtube_music_lookup(&http, &request, &country) {
+                Ok(Some(catalog)) => {
+                    cache.store(cache_key, Some(catalog.clone()));
+                    send(&results, &wake, &request, Outcome::Found(catalog));
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    log(&format!("catalog: YouTube Music search failed ({e})"));
+                    youtube_music_failed = true;
+                }
+            }
+            queue.drain_from(&requests);
+            if queue.has_newer() {
+                continue;
+            }
         }
 
         let wait = next_allowed.saturating_duration_since(Instant::now());
@@ -178,7 +206,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
             if queue.has_newer() {
                 continue;
             }
-            if let Some(catalog) = cache.get(&request.key) {
+            if let Some(catalog) = cache.get(&cache_key) {
                 send(&results, &wake, &request, Outcome::from_cached(catalog));
                 continue;
             }
@@ -187,13 +215,14 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
 
         let storefronts = itunes::storefronts(
             &country,
-            if request.try_other_storefronts {
+            if request.youtube_music {
                 &OTHER_STOREFRONTS
             } else {
                 &[]
             },
         );
         let mut outcome = Outcome::Missing;
+        let mut superseded = false;
         for (attempt, storefront) in storefronts.iter().enumerate() {
             if attempt > 0 {
                 // Each storefront is a request of its own against the same rate
@@ -201,7 +230,10 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                 thread::sleep(MIN_REQUEST_INTERVAL);
                 queue.drain_from(&requests);
                 if queue.has_newer() {
-                    outcome = Outcome::Failed;
+                    // Not a failure: nothing was refused, so neither the
+                    // backoff nor a retry is owed. Dropped unanswered, since
+                    // the track it was for is no longer playing.
+                    superseded = true;
                     break;
                 }
                 next_allowed = Instant::now() + MIN_REQUEST_INTERVAL;
@@ -216,13 +248,18 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                             &request.artist,
                             &request.album,
                         )
-                        .map(itunes::catalog_from);
+                        .map(itunes::catalog_from)
+                        .map(|catalog| for_source(catalog, request.youtube_music));
                         if found.is_some() || attempt + 1 == storefronts.len() {
+                            outcome = Outcome::from_cached(found.clone());
                             // Only a real answer is cached: a temporary failure must
                             // not become this track's permanent one, and a miss is
-                            // final only once every storefront has been asked.
-                            cache.store(request.key.clone(), found.clone());
-                            outcome = Outcome::from_cached(found);
+                            // final only once every source has been asked.
+                            if found.is_none() && youtube_music_failed {
+                                outcome = Outcome::Failed;
+                            } else {
+                                cache.store(cache_key.clone(), found);
+                            }
                             break;
                         }
                     }
@@ -238,6 +275,9 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                     break;
                 }
             }
+        }
+        if superseded {
+            continue;
         }
         if outcome == Outcome::Failed {
             // Past the ordinary spacing, so the next attempt — this track's
@@ -341,6 +381,55 @@ impl Cache {
             }
         }
     }
+}
+
+/// Ceiling on a YouTube Music search response, which runs to about 200 KB.
+const MAX_YOUTUBE_MUSIC_RESPONSE_BYTES: u64 = 1024 * 1024;
+
+/// `Ok(None)` when YouTube Music answered in every language tried and has no
+/// row for this track.
+fn youtube_music_lookup(
+    http: &Http,
+    request: &Request,
+    region: &str,
+) -> windows::core::Result<Option<CatalogInfo>> {
+    let languages =
+        ytmusic::languages_to_try(&request.name, &request.artist, request.app_language);
+    for language in languages {
+        let body = ytmusic::search_body(&request.name, &request.artist, language, region);
+        let response =
+            http.post_json(ytmusic::SEARCH_URL, &body, MAX_YOUTUBE_MUSIC_RESPONSE_BYTES)?;
+        let Some(songs) = ytmusic::parse_songs(&response) else {
+            log("catalog: YouTube Music returned something unparseable");
+            return Ok(None);
+        };
+        if let Some(song) =
+            ytmusic::pick_best(&songs, &request.name, &request.artist, request.duration_sec)
+        {
+            return Ok(Some(ytmusic::catalog_from(song)));
+        }
+    }
+    Ok(None)
+}
+
+/// The iTunes links are Apple Music's. They would send someone listening on
+/// YouTube Music to the wrong service, so only the artwork is borrowed.
+fn for_source(catalog: CatalogInfo, youtube_music: bool) -> CatalogInfo {
+    if youtube_music {
+        CatalogInfo {
+            artwork_url: catalog.artwork_url,
+            ..CatalogInfo::default()
+        }
+    } else {
+        catalog
+    }
+}
+
+/// The same track can be asked about by both sources, and their answers differ
+/// in which service the links point at.
+fn cache_key(request: &Request) -> String {
+    let source = if request.youtube_music { "ytm" } else { "am" };
+    format!("{source}\u{0}{}", request.key)
 }
 
 /// The machine's region, which picks the storefront the search runs against —

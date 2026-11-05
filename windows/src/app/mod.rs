@@ -31,9 +31,9 @@ use crate::app::connection::{Connection, Sent};
 use crate::catalog::{Outcome, Request as CatalogRequest, Resolver};
 use crate::core::activity_builder;
 use crate::core::debouncer::Debouncer;
-use crate::core::i18n::t;
+use crate::core::i18n::{t, AppLanguage};
 use crate::core::menu_model::{self, MenuAction};
-use crate::core::models::{CatalogInfo, ConnState, MusicState, PlayerState};
+use crate::core::models::{ConnState, MusicState, PlayerState};
 use crate::core::settings_model::{ButtonSlot, Settings};
 use crate::core::source::{select_source, Source};
 use crate::core::status_lines;
@@ -730,6 +730,13 @@ impl App {
         if track.name.is_empty() {
             return;
         }
+        // A browser reports the page title (`<song> | YouTube Music`, no
+        // artist) for a moment before the player fills in the track. Looking
+        // that up would spend a request — and, with the iTunes spacing, several
+        // seconds — on a track that does not exist.
+        if source == Source::YouTubeMusic && track.artist.trim().is_empty() {
+            return;
+        }
         // Asked before the identity is built, not after: this is the guard
         // that holds for the whole of a track the catalog had no answer
         // for, so it runs on every SMTC event and must not allocate to say
@@ -748,7 +755,12 @@ impl App {
             name: track.name.clone(),
             artist: track.artist.clone(),
             album: track.album.clone(),
-            try_other_storefronts: source == Source::YouTubeMusic,
+            duration_sec: track.duration_sec,
+            youtube_music: source == Source::YouTubeMusic,
+            app_language: match self.settings.language {
+                AppLanguage::En => "en",
+                AppLanguage::Ja => "ja",
+            },
         };
         // Logged as it goes out, not only when it comes back: a lookup that
         // was never asked for and one that never answered produce the same
@@ -788,16 +800,7 @@ impl App {
         match outcome {
             Outcome::Found(catalog) => {
                 let state = self.state_mut(source);
-                // The links are Apple Music's. They would send someone who was
-                // listening on YouTube Music to the wrong service, so only the
-                // artwork is borrowed from the catalog.
-                state.catalog = Some(match source {
-                    Source::AppleMusic => catalog,
-                    Source::YouTubeMusic => CatalogInfo {
-                        artwork_url: catalog.artwork_url,
-                        ..CatalogInfo::default()
-                    },
-                });
+                state.catalog = Some(catalog);
                 state.catalog_retry_at = None;
                 log(&format!("{name}: catalog resolved"));
                 // The presence has already gone out without artwork, so only a
@@ -1227,7 +1230,7 @@ pub(crate) fn log(message: &str) {
     let mut out = io::stdout().lock();
     let _ = writeln!(
         out,
-        "[{:02}:{:02}:{:02}] {message}",
-        now.wHour, now.wMinute, now.wSecond
+        "[{:02}:{:02}:{:02}.{:03}] {message}",
+        now.wHour, now.wMinute, now.wSecond, now.wMilliseconds
     );
 }

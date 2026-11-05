@@ -13,9 +13,12 @@ use std::time::{Duration, Instant};
 
 use windows::core::{Error as WinError, Result as WinResult, HRESULT, HSTRING};
 use windows::Foundation::Uri;
-use windows::Storage::Streams::{Buffer, DataReader, IInputStream, InputStreamOptions};
+use windows::Storage::Streams::{
+    Buffer, DataReader, IInputStream, InputStreamOptions, UnicodeEncoding,
+};
 use windows::Web::Http::{
-    HttpClient, HttpCompletionOption, HttpMethod, HttpRequestMessage, IHttpContent,
+    HttpClient, HttpCompletionOption, HttpMethod, HttpRequestMessage, HttpStringContent,
+    IHttpContent,
 };
 use windows::Win32::Foundation::{ERROR_FILE_TOO_LARGE, ERROR_INVALID_DATA};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
@@ -87,22 +90,37 @@ impl Http {
     /// a request that does not identify itself, so the header is not optional
     /// there even though HTTP says it is.
     pub fn get_with_user_agent(&self, url: &str, user_agent: Option<&str>) -> WinResult<String> {
-        let deadline = Instant::now() + RESOURCE_TIMEOUT;
         let uri = Uri::CreateUri(&HSTRING::from(url))?;
-
         let request = HttpRequestMessage::Create(&HttpMethod::Get()?, &uri)?;
         if let Some(user_agent) = user_agent {
             request
                 .Headers()?
                 .Append(&HSTRING::from("User-Agent"), &HSTRING::from(user_agent))?;
         }
+        self.send(&request, MAX_RESPONSE_BYTES)
+    }
+
+    /// POSTs a JSON body, reading at most `max_bytes` of the answer.
+    pub fn post_json(&self, url: &str, body: &str, max_bytes: u64) -> WinResult<String> {
+        let uri = Uri::CreateUri(&HSTRING::from(url))?;
+        let request = HttpRequestMessage::Create(&HttpMethod::Post()?, &uri)?;
+        request.SetContent(&HttpStringContent::CreateFromStringWithEncodingAndMediaType(
+            &HSTRING::from(body),
+            UnicodeEncoding::Utf8,
+            &HSTRING::from("application/json"),
+        )?)?;
+        self.send(&request, max_bytes)
+    }
+
+    fn send(&self, request: &HttpRequestMessage, max_bytes: u64) -> WinResult<String> {
+        let deadline = Instant::now() + RESOURCE_TIMEOUT;
 
         // Headers first, so an oversized body can be refused before it is read
         // rather than after it is already in memory.
         let response = join_with_timeout(
             &self
                 .client
-                .SendRequestWithOptionAsync(&request, HttpCompletionOption::ResponseHeadersRead)?,
+                .SendRequestWithOptionAsync(request, HttpCompletionOption::ResponseHeadersRead)?,
             REQUEST_TIMEOUT.min(remaining(deadline)),
         )?;
         // Not `EnsureSuccessStatusCode`, which raises an HRESULT and nothing
@@ -123,13 +141,13 @@ impl Http {
         // request fail with a bogus S_OK-coded error, which silently broke
         // both the update check and the artwork lookup.
         if let Ok(declared) = declared_content_length(&content) {
-            if declared > MAX_RESPONSE_BYTES {
+            if declared > max_bytes {
                 return Err(too_large());
             }
         }
 
         let stream = join_with_timeout(&content.ReadAsInputStreamAsync()?, remaining(deadline))?;
-        let bytes = read_capped(&stream, deadline)?;
+        let bytes = read_capped(&stream, deadline, max_bytes)?;
         String::from_utf8(bytes).map_err(|_| {
             WinError::new(
                 HRESULT::from_win32(ERROR_INVALID_DATA.0),
@@ -151,11 +169,11 @@ fn declared_content_length(content: &IHttpContent) -> WinResult<u64> {
     content.Headers()?.ContentLength()?.Value()
 }
 
-/// Reads a stream to its end, giving up past `MAX_RESPONSE_BYTES`.
+/// Reads a stream to its end, giving up past `max_bytes`.
 ///
 /// A `Content-Length` covers the ordinary case, but a chunked response declares
 /// no length at all, so the cap has to hold on the read path too.
-fn read_capped(stream: &IInputStream, deadline: Instant) -> WinResult<Vec<u8>> {
+fn read_capped(stream: &IInputStream, deadline: Instant, max_bytes: u64) -> WinResult<Vec<u8>> {
     const CHUNK: u32 = 16 * 1024;
 
     let mut out: Vec<u8> = Vec::new();
@@ -169,7 +187,7 @@ fn read_capped(stream: &IInputStream, deadline: Instant) -> WinResult<Vec<u8>> {
         if filled_len == 0 {
             return Ok(out);
         }
-        if out.len() as u64 + u64::from(filled_len) > MAX_RESPONSE_BYTES {
+        if out.len() as u64 + u64::from(filled_len) > max_bytes {
             return Err(too_large());
         }
         let start = out.len();

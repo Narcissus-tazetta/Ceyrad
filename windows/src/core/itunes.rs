@@ -235,7 +235,7 @@ fn trim_suffix_ignore_case<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 /// missed fold is not a lost tier but a lost match — no artwork and no catalog
 /// buttons — so the mapping is spelled out rather than pulled in as a
 /// dependency for decomposition.
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     s.chars()
         // An accent written as a separate combining mark — `e` + U+0301 rather
         // than `é`. Both spellings reach here and must fold to the same thing.

@@ -20,3 +20,4 @@ pub mod tray_icon_glyph;
 pub mod update_check;
 pub mod url_prompt;
 pub mod youtube_music;
+pub mod ytmusic;
