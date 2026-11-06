@@ -17,8 +17,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::log;
-use crate::core::{itunes, ytmusic};
 use crate::core::models::CatalogInfo;
+use crate::core::{itunes, ytmusic};
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winhttp::{ComApartment, Http};
 
@@ -393,8 +393,7 @@ fn youtube_music_lookup(
     request: &Request,
     region: &str,
 ) -> windows::core::Result<Option<CatalogInfo>> {
-    let languages =
-        ytmusic::languages_to_try(&request.name, &request.artist, request.app_language);
+    let languages = ytmusic::languages_to_try(&request.name, &request.artist, request.app_language);
     for language in languages {
         let body = ytmusic::search_body(&request.name, &request.artist, language, region);
         let response =

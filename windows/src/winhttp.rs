@@ -104,11 +104,13 @@ impl Http {
     pub fn post_json(&self, url: &str, body: &str, max_bytes: u64) -> WinResult<String> {
         let uri = Uri::CreateUri(&HSTRING::from(url))?;
         let request = HttpRequestMessage::Create(&HttpMethod::Post()?, &uri)?;
-        request.SetContent(&HttpStringContent::CreateFromStringWithEncodingAndMediaType(
-            &HSTRING::from(body),
-            UnicodeEncoding::Utf8,
-            &HSTRING::from("application/json"),
-        )?)?;
+        request.SetContent(
+            &HttpStringContent::CreateFromStringWithEncodingAndMediaType(
+                &HSTRING::from(body),
+                UnicodeEncoding::Utf8,
+                &HSTRING::from("application/json"),
+            )?,
+        )?;
         self.send(&request, max_bytes)
     }
 

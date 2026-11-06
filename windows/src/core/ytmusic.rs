@@ -144,7 +144,11 @@ fn song_from_row(row: &Value) -> Option<Song> {
             .get(index)
             .and_then(|c| c.pointer("/musicResponsiveListItemFlexColumnRenderer/text/runs"))
             .and_then(Value::as_array)
-            .map(|runs| runs.iter().filter_map(|r| r.get("text")?.as_str()).collect())
+            .map(|runs| {
+                runs.iter()
+                    .filter_map(|r| r.get("text")?.as_str())
+                    .collect()
+            })
             .unwrap_or_default()
     };
 
@@ -155,7 +159,9 @@ fn song_from_row(row: &Value) -> Option<Song> {
     let artist_runs = segments.next().unwrap_or_default();
     let artists = artist_runs.concat().trim().to_string();
     let first_artist = artist_runs.first().map(|s| s.trim().to_string())?;
-    let duration_sec = segments.last().and_then(|seg| parse_duration(&seg.concat()));
+    let duration_sec = segments
+        .last()
+        .and_then(|seg| parse_duration(&seg.concat()));
 
     let video_id = row
         .pointer("/playlistItemData/videoId")
@@ -265,8 +271,7 @@ pub fn catalog_from(song: &Song) -> CatalogInfo {
 /// Swaps the size suffix of a Google-hosted thumbnail. Anything else — a
 /// `i.ytimg.com` still, say — is left as it is.
 fn upscale_artwork(url: &str) -> String {
-    let is_google_image =
-        url.contains(".googleusercontent.com/") || url.contains(".ggpht.com/");
+    let is_google_image = url.contains(".googleusercontent.com/") || url.contains(".ggpht.com/");
     match url.rfind('=') {
         Some(index) if is_google_image => format!("{}={ARTWORK_SIZE_SUFFIX}", &url[..index]),
         _ => url.to_string(),
@@ -301,8 +306,24 @@ mod tests {
     #[test]
     fn rows_are_read_wherever_they_sit() {
         let body = response(vec![
-            row("シンカ", &["Ado", " • ", "シンカ", " • ", "3:20"], "q0OGymI3LMs"),
-            row("唱", &["Ado", "、", "ジャックス・ジョーンズ", " • ", "唱", " • ", "4:26"], "x"),
+            row(
+                "シンカ",
+                &["Ado", " • ", "シンカ", " • ", "3:20"],
+                "q0OGymI3LMs",
+            ),
+            row(
+                "唱",
+                &[
+                    "Ado",
+                    "、",
+                    "ジャックス・ジョーンズ",
+                    " • ",
+                    "唱",
+                    " • ",
+                    "4:26",
+                ],
+                "x",
+            ),
         ]);
         let songs = parse_songs(&body).expect("valid json");
         assert_eq!(songs.len(), 2);
@@ -341,9 +362,17 @@ mod tests {
             row("Song", &["Artist", " • ", "Album", " • ", "3:05"], "studio"),
         ]))
         .unwrap();
-        assert_eq!(pick_best(&songs, "Song", "Artist", Some(184.0)).unwrap().video_id, "studio");
+        assert_eq!(
+            pick_best(&songs, "Song", "Artist", Some(184.0))
+                .unwrap()
+                .video_id,
+            "studio"
+        );
         // Without a duration the first matching row is taken.
-        assert_eq!(pick_best(&songs, "Song", "Artist", None).unwrap().video_id, "live");
+        assert_eq!(
+            pick_best(&songs, "Song", "Artist", None).unwrap().video_id,
+            "live"
+        );
     }
 
     #[test]
@@ -359,8 +388,12 @@ mod tests {
 
     #[test]
     fn no_artist_means_no_match() {
-        let songs = parse_songs(&response(vec![row("Song", &["Artist", " • ", "A", " • ", "3:00"], "x")]))
-            .unwrap();
+        let songs = parse_songs(&response(vec![row(
+            "Song",
+            &["Artist", " • ", "A", " • ", "3:00"],
+            "x",
+        )]))
+        .unwrap();
         assert!(pick_best(&songs, "Song", "", None).is_none());
     }
 
@@ -376,7 +409,15 @@ mod tests {
 
         let songs = parse_songs(&response(vec![row(
             "唱",
-            &["Ado", "、", "ジャックス・ジョーンズ", " • ", "唱", " • ", "4:26"],
+            &[
+                "Ado",
+                "、",
+                "ジャックス・ジョーンズ",
+                " • ",
+                "唱",
+                " • ",
+                "4:26",
+            ],
             "x",
         )]))
         .unwrap();
@@ -387,8 +428,16 @@ mod tests {
     #[test]
     fn a_collaborator_spelled_differently_still_matches_on_the_lead() {
         let songs = parse_songs(&response(vec![
-            row("上書きしちゃった", &["なとり", "、", "キタニタツヤ", " • ", "x", " • ", "2:44"], "other"),
-            row("いらないもの", &["キタニタツヤ", "、", "なとり", " • ", "x", " • ", "3:06"], "it"),
+            row(
+                "上書きしちゃった",
+                &["なとり", "、", "キタニタツヤ", " • ", "x", " • ", "2:44"],
+                "other",
+            ),
+            row(
+                "いらないもの",
+                &["キタニタツヤ", "、", "なとり", " • ", "x", " • ", "3:06"],
+                "it",
+            ),
         ]))
         .unwrap();
         let best = pick_best(&songs, "いらないもの", "キタニタツヤ、natori", Some(185.0));
@@ -399,10 +448,17 @@ mod tests {
 
     #[test]
     fn catalog_links_to_youtube_music_with_large_artwork() {
-        let songs = parse_songs(&response(vec![row("S", &["A", " • ", "B", " • ", "3:00"], "vid")]))
-            .unwrap();
+        let songs = parse_songs(&response(vec![row(
+            "S",
+            &["A", " • ", "B", " • ", "3:00"],
+            "vid",
+        )]))
+        .unwrap();
         let catalog = catalog_from(&songs[0]);
-        assert_eq!(catalog.song_url.as_deref(), Some("https://music.youtube.com/watch?v=vid"));
+        assert_eq!(
+            catalog.song_url.as_deref(),
+            Some("https://music.youtube.com/watch?v=vid")
+        );
         assert_eq!(
             catalog.artwork_url.as_deref(),
             Some("https://lh3.googleusercontent.com/abc=w544-h544-l90-rj")
@@ -418,9 +474,18 @@ mod tests {
 
     #[test]
     fn the_script_of_the_track_decides_the_first_language() {
-        assert_eq!(languages_to_try("エメラルド", "キタニタツヤ", "en"), ["ja", "en"]);
-        assert_eq!(languages_to_try("Dynamite", "방탄소년단", "ja"), ["ko", "ja", "en"]);
-        assert_eq!(languages_to_try("Shape of You", "Ed Sheeran", "ja"), ["ja", "en"]);
+        assert_eq!(
+            languages_to_try("エメラルド", "キタニタツヤ", "en"),
+            ["ja", "en"]
+        );
+        assert_eq!(
+            languages_to_try("Dynamite", "방탄소년단", "ja"),
+            ["ko", "ja", "en"]
+        );
+        assert_eq!(
+            languages_to_try("Shape of You", "Ed Sheeran", "ja"),
+            ["ja", "en"]
+        );
         assert_eq!(languages_to_try("Shape of You", "Ed Sheeran", "en"), ["en"]);
     }
 
@@ -434,7 +499,8 @@ mod tests {
 
     #[test]
     fn the_body_carries_the_query_and_the_songs_filter() {
-        let body: Value = serde_json::from_str(&search_body("Song (feat. X)", "Artist", "ja", "JP")).unwrap();
+        let body: Value =
+            serde_json::from_str(&search_body("Song (feat. X)", "Artist", "ja", "JP")).unwrap();
         assert_eq!(body["query"], "Song Artist");
         assert_eq!(body["params"], SONGS_FILTER);
         assert_eq!(body["context"]["client"]["hl"], "ja");
