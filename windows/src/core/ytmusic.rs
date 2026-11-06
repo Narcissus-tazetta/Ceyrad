@@ -160,7 +160,7 @@ fn song_from_row(row: &Value) -> Option<Song> {
     let artists = artist_runs.concat().trim().to_string();
     let first_artist = artist_runs.first().map(|s| s.trim().to_string())?;
     let duration_sec = segments
-        .last()
+        .next_back()
         .and_then(|seg| parse_duration(&seg.concat()));
 
     let video_id = row
