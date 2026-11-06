@@ -35,6 +35,19 @@ final class MusicStateTests: XCTestCase {
         XCTAssertFalse(state(playerState: .playing, hasTrack: false).isDisplayable)
     }
 
+    func testAdvertisementIsNotDisplayable() {
+        var s = state(playerState: .paused)
+        s.track = TrackInfo(name: "1648108987", artist: "", album: "")
+        XCTAssertFalse(s.isDisplayable)
+    }
+
+    func testNumericTitleWithArtistIsStillDisplayable() {
+        // 数字だけの曲名の実在する曲（例: 1999）を広告と取り違えない
+        var s = state(playerState: .playing)
+        s.track = TrackInfo(name: "1999", artist: "Prince", album: "1999")
+        XCTAssertTrue(s.isDisplayable)
+    }
+
     func testNotRunningIsNotDisplayable() {
         XCTAssertFalse(state(running: false, playerState: .playing).isDisplayable)
     }

@@ -38,6 +38,12 @@ final class StatusLinesBuilderTests: XCTestCase {
         )
     }
 
+    func testAdvertisementExplainsWhyNothingIsShown() {
+        let ad = TrackInfo(name: "1648108987", artist: "", album: "")
+        let lines = StatusLinesBuilder.lines(input(playerState: .paused, track: ad))
+        XCTAssertEqual(lines.first, "Apple Music: Advertisement (not shown)")
+    }
+
     func testTrackWithoutArtistOmitsTheDash() {
         let track = TrackInfo(name: "Song", artist: "", album: "")
         XCTAssertEqual(StatusLinesBuilder.lines(input(track: track)).first, "♪ Apple Music: Song")

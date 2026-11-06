@@ -46,6 +46,17 @@ impl TrackInfo {
         }
     }
 
+    /// An Apple Music advertisement. The real notification has not been
+    /// measured: the condition is inferred from how an ad showed up on Discord
+    /// (a title of digits only, artist unknown). A real song is not normally
+    /// shaped like this.
+    pub fn is_advertisement(&self) -> bool {
+        !self.name.is_empty()
+            && self.name.bytes().all(|b| b.is_ascii_digit())
+            && self.artist.is_empty()
+            && self.album.is_empty()
+    }
+
     pub fn identity(&self) -> String {
         format!(
             "{}{}{}{}{}",
@@ -153,11 +164,14 @@ impl MusicState {
         self.player_state = new;
     }
 
-    /// Whether there is something to put on Discord: running, with a track, and
-    /// not stopped. A paused player still counts — whether the presence is
-    /// actually cleared is `pause_hide_minutes`'s decision, not this one.
+    /// Whether there is something to put on Discord: running, with a track
+    /// that is not an advertisement, and not stopped. A paused player still
+    /// counts — whether the presence is actually cleared is
+    /// `pause_hide_minutes`'s decision, not this one.
     pub fn is_displayable(&self) -> bool {
-        self.running && self.track.is_some() && self.player_state != PlayerState::Stopped
+        self.running
+            && self.track.as_ref().is_some_and(|t| !t.is_advertisement())
+            && self.player_state != PlayerState::Stopped
     }
 
     /// Wipes the catalog back to "nothing known", for a track change or a

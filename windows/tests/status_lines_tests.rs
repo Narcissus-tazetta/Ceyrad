@@ -158,3 +158,13 @@ fn the_discord_row_is_not_idle_when_only_youtube_music_is_up() {
     i.discord_state = ConnState::Connected;
     assert_eq!(lines(&i).last().unwrap(), "Discord: Connected");
 }
+
+#[test]
+fn an_advertisement_explains_why_nothing_is_shown() {
+    let ad = MusicState {
+        track: Some(TrackInfo::new("1648108987", "", "")),
+        ..paused("", "")
+    };
+    let rows = lines(&input(&ad));
+    assert_eq!(rows[0], "Apple Music: Advertisement (not shown)");
+}

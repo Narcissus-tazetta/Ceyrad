@@ -10,6 +10,8 @@ Discordに送るActivityの組み立ては両OSに1本ずつ実装がある。�
 |---|---|
 | `activity_vectors.json` | `Tests/CeyradTests/SharedVectorTests.swift` / `windows/tests/shared_vector_tests.rs` |
 | `youtube_music_vectors.json` | `Tests/CeyradTests/YouTubeMusicVectorTests.swift` / `windows/tests/youtube_music_vector_tests.rs` |
+| `youtube_music_search_vectors.json` | `Tests/CeyradTests/YouTubeMusicSearchVectorTests.swift` / `windows/tests/ytmusic_search_vector_tests.rs` |
+| `advertisement_vectors.json` | `Tests/CeyradTests/AdvertisementVectorTests.swift` / `windows/tests/advertisement_vector_tests.rs` |
 
 ## activity_vectors.json
 
@@ -32,6 +34,20 @@ Discordに送るActivityの組み立ては両OSに1本ずつ実装がある。�
   Windows の AUMID）ので、ここには入れず入力として渡す。
 - `hasYouTubeMusicTab` は再生元のブラウザに `music.youtube.com` のタブがあるか。`null` は
   そのOSにタブ確認の手段がない（Windows）ことを表し、アルバムの有無だけで決める。
+
+## youtube_music_search_vectors.json
+
+YouTube Musicの検索（`YouTubeMusicSearch` / `core::ytmusic`）の純粋な部分。
+
+- `languages[]`: 曲とアプリの表示言語から、検索に使う言語の順序。
+- `picks[]`: 検索結果の行（`byline` はアーティスト・アルバム・長さを `•` でつないだrunの列）から、
+  この曲にあたる行の `videoId`（無ければ `null`）。`expectedSongURL` / `expectedArtworkURL` は
+  選ばれた行から組み立てるカタログのリンク。
+
+## advertisement_vectors.json
+
+`cases[]` の各要素が「この曲情報はApple Musicの広告とみなす/みなさない」という1件。
+広告中の通知を実測したものではなく、Discordに出た表示から推測した条件。
 
 ## 期待値を変えるとき
 

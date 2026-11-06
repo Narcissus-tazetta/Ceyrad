@@ -158,22 +158,24 @@ final class ITunesSearchClient {
         }.resume()
     }
 
+    /// 表記揺れ（アクセント・全角半角・大文字小文字）を畳んだ比較用の文字列。
+    static func norm(_ s: String?) -> String {
+        (s ?? "")
+            .folding(
+                options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive],
+                locale: nil
+            )
+            // widthInsensitiveは全角スペース(U+3000)を折りたたまないため個別に吸収する
+            .replacingOccurrences(of: "\u{3000}", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 誤マッチで無関係な曲のリンクを出さないよう、一致度の高い順にだけ採用する。
     /// feat.表記やアルバムの「- Single」サフィックスの揺れは除去した上でも比較する。
     static func pickBest(
         from results: [SearchResult],
         name: String, artist: String, album: String
     ) -> SearchResult? {
-        func norm(_ s: String?) -> String {
-            (s ?? "")
-                .folding(
-                    options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive],
-                    locale: nil
-                )
-                // widthInsensitiveは全角スペース(U+3000)を折りたたまないため個別に吸収する
-                .replacingOccurrences(of: "\u{3000}", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
         let n = norm(name)
         let a = norm(artist)
         let al = norm(stripAlbumSuffix(album))

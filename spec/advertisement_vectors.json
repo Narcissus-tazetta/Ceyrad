@@ -1,0 +1,11 @@
+{
+  "cases": [
+    { "name": "digits-only title with no artist or album is an ad", "track": { "name": "1648108987", "artist": "", "album": "" }, "expected": true },
+    { "name": "a song titled with digits keeps its artist", "track": { "name": "1999", "artist": "Prince", "album": "1999" }, "expected": false },
+    { "name": "an artist alone rules it out", "track": { "name": "1648108987", "artist": "Someone", "album": "" }, "expected": false },
+    { "name": "an album alone rules it out", "track": { "name": "1648108987", "artist": "", "album": "Album" }, "expected": false },
+    { "name": "an empty title is not an ad", "track": { "name": "", "artist": "", "album": "" }, "expected": false },
+    { "name": "a non-numeric title is not an ad", "track": { "name": "Untitled", "artist": "", "album": "" }, "expected": false },
+    { "name": "fullwidth digits are not the ad's ASCII digits", "track": { "name": "１２３", "artist": "", "album": "" }, "expected": false }
+  ]
+}

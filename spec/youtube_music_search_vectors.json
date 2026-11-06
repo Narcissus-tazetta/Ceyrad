@@ -1,0 +1,97 @@
+{
+  "languages": [
+    { "name": "kana settles Japanese first", "track": "エメラルド", "artist": "キタニタツヤ", "appLanguage": "en", "expected": ["ja", "en"] },
+    { "name": "hangul settles Korean, then the app language", "track": "Dynamite", "artist": "방탄소년단", "appLanguage": "ja", "expected": ["ko", "ja", "en"] },
+    { "name": "Latin text falls back to the app language", "track": "Shape of You", "artist": "Ed Sheeran", "appLanguage": "ja", "expected": ["ja", "en"] },
+    { "name": "English app language with Latin text is English only", "track": "Shape of You", "artist": "Ed Sheeran", "appLanguage": "en", "expected": ["en"] }
+  ],
+  "picks": [
+    {
+      "name": "the matching song wins over an earlier unrelated one",
+      "rows": [
+        { "title": "リベリオン", "byline": ["Ado", " • ", "残夢", " • ", "2:59"], "videoId": "a" },
+        { "title": "シンカ", "byline": ["Ado", " • ", "シンカ", " • ", "3:20"], "videoId": "b" }
+      ],
+      "track": "シンカ", "artist": "Ado", "durationSec": 199,
+      "expectedVideoId": "b",
+      "expectedSongURL": "https://music.youtube.com/watch?v=b",
+      "expectedArtworkURL": "https://lh3.googleusercontent.com/abc=w544-h544-l90-rj"
+    },
+    {
+      "name": "duration breaks a tie between versions",
+      "rows": [
+        { "title": "Song", "byline": ["Artist", " • ", "Live", " • ", "5:37"], "videoId": "live" },
+        { "title": "Song", "byline": ["Artist", " • ", "Album", " • ", "3:05"], "videoId": "studio" }
+      ],
+      "track": "Song", "artist": "Artist", "durationSec": 184,
+      "expectedVideoId": "studio"
+    },
+    {
+      "name": "without a duration the first matching row is taken",
+      "rows": [
+        { "title": "Song", "byline": ["Artist", " • ", "Live", " • ", "5:37"], "videoId": "live" },
+        { "title": "Song", "byline": ["Artist", " • ", "Album", " • ", "3:05"], "videoId": "studio" }
+      ],
+      "track": "Song", "artist": "Artist", "durationSec": null,
+      "expectedVideoId": "live"
+    },
+    {
+      "name": "another artist's song of the same name is rejected",
+      "rows": [
+        { "title": "Song", "byline": ["Cover Band", " • ", "Tribute", " • ", "3:00"], "videoId": "x" }
+      ],
+      "track": "Song", "artist": "Artist", "durationSec": null,
+      "expectedVideoId": null
+    },
+    {
+      "name": "no artist means no match",
+      "rows": [
+        { "title": "Song", "byline": ["Artist", " • ", "A", " • ", "3:00"], "videoId": "x" }
+      ],
+      "track": "Song", "artist": "", "durationSec": null,
+      "expectedVideoId": null
+    },
+    {
+      "name": "a fullwidth-bracket credit still matches the plain title",
+      "rows": [
+        { "title": "Radio Noise（feat. Ado）", "byline": ["ミコ吉", " • ", "Radio Noise", " • ", "4:49"], "videoId": "x" }
+      ],
+      "track": "Radio Noise", "artist": "ミコ吉", "durationSec": null,
+      "expectedVideoId": "x"
+    },
+    {
+      "name": "the joined artist string matches in full",
+      "rows": [
+        { "title": "唱", "byline": ["Ado", "、", "ジャックス・ジョーンズ", " • ", "唱", " • ", "4:26"], "videoId": "x" }
+      ],
+      "track": "唱", "artist": "Ado、ジャックス・ジョーンズ", "durationSec": null,
+      "expectedVideoId": "x"
+    },
+    {
+      "name": "the lead artist alone matches a collaboration",
+      "rows": [
+        { "title": "唱", "byline": ["Ado", "、", "ジャックス・ジョーンズ", " • ", "唱", " • ", "4:26"], "videoId": "x" }
+      ],
+      "track": "唱", "artist": "Ado", "durationSec": null,
+      "expectedVideoId": "x"
+    },
+    {
+      "name": "a collaborator spelled differently still matches on the lead",
+      "rows": [
+        { "title": "上書きしちゃった", "byline": ["なとり", "、", "キタニタツヤ", " • ", "x", " • ", "2:44"], "videoId": "other" },
+        { "title": "いらないもの", "byline": ["キタニタツヤ", "、", "なとり", " • ", "x", " • ", "3:06"], "videoId": "it" }
+      ],
+      "track": "いらないもの", "artist": "キタニタツヤ、natori", "durationSec": 185,
+      "expectedVideoId": "it"
+    },
+    {
+      "name": "a shared collaborator is not enough without the lead",
+      "rows": [
+        { "title": "上書きしちゃった", "byline": ["なとり", "、", "キタニタツヤ", " • ", "x", " • ", "2:44"], "videoId": "other" },
+        { "title": "いらないもの", "byline": ["キタニタツヤ", "、", "なとり", " • ", "x", " • ", "3:06"], "videoId": "it" }
+      ],
+      "track": "いらないもの", "artist": "natori、キタニタツヤ", "durationSec": null,
+      "expectedVideoId": null
+    }
+  ]
+}

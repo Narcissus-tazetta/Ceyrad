@@ -20,11 +20,44 @@ extension AppDelegate {
             $0.catalogRequestedFor = track.identity
             $0.catalogRetryAt = nil
         }
-        itunes.resolve(
-            name: track.name, artist: track.artist, album: track.album,
-            fallbackStorefronts: source == .youtubeMusic ? ["US", "JP"] : []
+        guard source == .youtubeMusic else {
+            itunes.resolve(
+                name: track.name, artist: track.artist, album: track.album
+            ) { [weak self] outcome in
+                self?.applyCatalog(source, target: track, outcome: outcome)
+            }
+            return
+        }
+        // YouTube Music自身の検索が先: iTunesのレート制限の外にあり、当たれば待たずに済む。
+        youtubeSearch.resolve(
+            name: track.name, artist: track.artist, durationSec: track.durationSec,
+            appLanguage: settings.language.rawValue
         ) { [weak self] outcome in
-            self?.applyCatalog(source, target: track, outcome: outcome)
+            guard let self else { return }
+            if case .found = outcome {
+                return self.applyCatalog(source, target: track, outcome: outcome)
+            }
+            let youtubeFailed = outcome == .failed
+            // 地域のストアとは表記が違いうるので、US・JPのストアも引く。
+            self.itunes.resolve(
+                name: track.name, artist: track.artist, album: track.album,
+                fallbackStorefronts: ["US", "JP"]
+            ) { [weak self] outcome in
+                guard let self else { return }
+                self.applyCatalog(
+                    source, target: track,
+                    outcome: Self.youtubeMusicFallback(outcome, youtubeFailed: youtubeFailed))
+            }
+        }
+    }
+
+    /// iTunesの答えをYouTube Music向けに直す。リンクはApple Musicのものなので借りるのはアートワークだけ。
+    /// YouTube Music側が「訊けなかった」なら、iTunesで見つからなくても確定した「無い」にはしない。
+    static func youtubeMusicFallback(_ outcome: CatalogOutcome, youtubeFailed: Bool) -> CatalogOutcome {
+        switch outcome {
+        case .found(let info): return .found(CatalogInfo(artworkURL: info.artworkURL))
+        case .missing: return youtubeFailed ? .failed : .missing
+        case .failed: return .failed
         }
     }
 

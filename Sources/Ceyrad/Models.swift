@@ -20,6 +20,13 @@ struct TrackInfo: Equatable {
     var identity: String {
         "\(name)\u{1F}\(artist)\u{1F}\(album)"
     }
+
+    /// Apple Musicの広告。実際の通知は未計測で、広告中のDiscord表示（曲名が数字だけで
+    /// アーティスト不明）から推測した条件。本物の曲がこの形になることは通常ない。
+    var isAdvertisement: Bool {
+        !name.isEmpty && name.allSatisfy(\.isASCII) && name.allSatisfy(\.isNumber)
+            && artist.isEmpty && album.isEmpty
+    }
 }
 
 /// カタログ情報（iTunes Search APIの検索結果から得られるURL群）
@@ -74,10 +81,10 @@ struct MusicState {
     /// 失敗した照会を再試行してよくなる時刻。`nil` は待機中でないことを表す。
     var catalogRetryAt: Date?
 
-    /// Discordに表示する候補か。稼働中 && 曲あり && 停止中でない。
+    /// Discordに表示する候補か。稼働中 && 曲あり（広告でない）&& 停止中でない。
     /// 一時停止も候補ではある（実際に消すかどうかはpauseHideMinutes側の判断）。
     var isDisplayable: Bool {
-        running && track != nil && playerState != .stopped
+        running && track.map { !$0.isAdvertisement } == true && playerState != .stopped
     }
 
     /// 曲が変わった・プレイヤーが止まった等でカタログを白紙に戻す。

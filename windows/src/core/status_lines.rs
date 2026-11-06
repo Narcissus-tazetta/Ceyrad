@@ -54,6 +54,17 @@ fn source_line(
     if !s.running {
         return absent(name);
     }
+    // Ads are not put on Discord; without a line saying so, the presence
+    // vanishing would have no visible cause.
+    if s.player_state != PlayerState::Stopped
+        && s.track.as_ref().is_some_and(|t| t.is_advertisement())
+    {
+        return t_fmt!(
+            language,
+            "{name}: Advertisement (not shown)",
+            "{name}: 広告(非表示)"
+        );
+    }
     match s.player_state {
         PlayerState::Stopped => t_fmt!(language, "{name}: Stopped", "{name}: 停止中"),
         PlayerState::Playing => format!("♪ {name}: {}", track_line(s.track.as_ref())),

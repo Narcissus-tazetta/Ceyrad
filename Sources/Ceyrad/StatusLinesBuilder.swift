@@ -31,10 +31,12 @@ enum StatusLinesBuilder {
         switch s.playerState {
         case .stopped:
             return t(language, "\(name): Stopped", "\(name): 停止中")
-        case .playing:
-            return "♪ \(name): \(trackLine(s.track))"
-        case .paused:
-            return "⏸ \(name): \(trackLine(s.track))"
+        case .playing, .paused:
+            // 広告はDiscordに出さない。メニューに理由を残さないと、表示が消えた原因が利用者に分からない。
+            if s.track?.isAdvertisement == true {
+                return t(language, "\(name): Advertisement (not shown)", "\(name): 広告(非表示)")
+            }
+            return "\(s.playerState == .playing ? "♪" : "⏸") \(name): \(trackLine(s.track))"
         }
     }
 

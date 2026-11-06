@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     let rpc = DiscordRPCClient()
     let itunes = ITunesSearchClient()
+    let youtubeSearch = YouTubeMusicSearchClient()
     let debouncer = Debouncer(delay: 0.8)
     private var menuBar: MenuBarController!
     private var updaterController: SPUStandardUpdaterController!
@@ -256,10 +257,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let track = current.track, shouldShowActivity(current.playerState) else { return nil }
         var catalog = current.catalog
         if source == .youtubeMusic {
-            // アーティスト/アルバムのページはApple Musicのものなので、曲ページ（タブのURL）と
-            // アートワークだけを引き継ぐ。iTunes で見つからない（まだ答えがない）あいだは動画のサムネイル。
+            // アーティスト/アルバムのページはApple Musicのものなので出さない。曲ページはタブのURLが
+            // 確かなのでそれを優先し、無ければYouTube Musicの検索結果。アートワークはカタログ
+            // （YouTube Music自身、無ければiTunes）、まだ答えがないあいだは動画のサムネイル。
             catalog = CatalogInfo(
-                songURL: current.pageURL,
+                songURL: current.pageURL ?? current.catalog?.songURL,
                 artworkURL: current.catalog?.artworkURL
                     ?? current.pageURL.flatMap(YouTubeMusic.thumbnailURL(songURL:)))
         }

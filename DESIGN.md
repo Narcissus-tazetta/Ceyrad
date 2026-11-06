@@ -242,6 +242,8 @@ Discordへ送るActivityの組み立ては、Swift（`ActivityBuilder`）とRust
 | 再接続バックオフ | `ReconnectBackoff` | `core::backoff::Backoff` |
 | 表示ソースの選択 | `SourceSelector` | `core::source` |
 | YouTube Musicの判定 | `YouTubeMusic` | `core::youtube_music` |
+| YouTube Musicの検索 | `YouTubeMusicSearch` | `core::ytmusic` |
+| Apple Musicの広告判定 | `TrackInfo.isAdvertisement` | `TrackInfo::is_advertisement` |
 | 一時停止タイマー | `PauseHideTimer` | `core::timers`（`Timer::PauseHide`） |
 
 **メニューはデータとして組み立てる。** `MenuModel` / `core::menu_model` はOS APIを一切呼ばず、
@@ -302,9 +304,12 @@ macOSだけの補強として、アルバム名が空でも、再生中の曲名
 
 ### 表示
 
-- アートワークは、Apple Musicと同じiTunes Search APIの照会で引く。見つからない（答えを待つあいだも含む）ときは、曲ページの動画のサムネイル
-  （`i.ytimg.com/vi/<id>/mqdefault.jpg`。320x180で黒帯がなく、どの動画にもある）。曲ページが分からなければ出さない
+- アートワークは、YouTube Music自身の検索（`YouTubeMusicSearch` / `core::ytmusic`）で引く。曲名とアーティストの
+  一致が要り、長さは同点の決め手にだけ使う。言語は曲のかな・ハングル → メニューの言語 → 英語の順。見つからなければ
+  iTunes Search API（地域のストア+US・JP。リンクは借りずアートワークだけ）、それも無い（答えを待つあいだも含む）ときは、
+  曲ページの動画のサムネイル（`i.ytimg.com/vi/<id>/mqdefault.jpg`。320x180で黒帯がなく、どの動画にもある）。
+  曲ページが分からなければ出さない。YouTube Music側が「訊けなかった」ときは、iTunesで見つからなくても確定した「無い」にせず再試行する
 - 曲ボタンはタブのURL。複数のタブがあるときは曲名がタイトルと一致するもの。`/watch`以外のページ
-  （ホームなど）を開いているときはURLが曲を指さないので出さない
+  （ホームなど）を開いているときはURLが曲を指さないので、YouTube Musicの検索で見つかった曲のURLを使う（見つからなければ出さない）
 - アーティスト/アルバムのボタンはApple Musicのページを指すので出さない。曲ボタンの既定ラベルは
   「Play on YouTube Music」（利用者が変えたラベルは保持）
