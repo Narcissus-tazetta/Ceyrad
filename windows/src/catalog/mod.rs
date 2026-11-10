@@ -17,7 +17,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::log;
+use crate::core::catalog::{Outcome, Queue, Request, Resolved};
 use crate::core::models::CatalogInfo;
+use crate::core::source::Source;
 use crate::core::{itunes, ytmusic};
 use crate::discord::pipe::Event as WakeEvent;
 use crate::winhttp::{ComApartment, Http};
@@ -49,44 +51,7 @@ const CACHE_CAPACITY: usize = 300;
 /// Storefront used when the machine's region cannot be read.
 const FALLBACK_COUNTRY: &str = "US";
 
-#[derive(Debug, Clone)]
-pub struct Request {
-    /// `TrackInfo::identity`, so a late answer can be matched against whatever
-    /// is playing by the time it lands.
-    pub key: String,
-    pub name: String,
-    pub artist: String,
-    pub album: String,
-    pub duration_sec: Option<f64>,
-    /// The track is playing on YouTube Music: search YouTube Music itself
-    /// first, and fall back to iTunes across the US and JP storefronts too,
-    /// since its spelling does not follow the machine's region.
-    pub youtube_music: bool,
-    /// The app's menu language (`en` / `ja`), a hint at the language the
-    /// user's YouTube Music is in.
-    pub app_language: &'static str,
-}
-
-/// Storefronts tried after the machine's own when a request asks for them.
 const OTHER_STOREFRONTS: [&str; 2] = ["US", "JP"];
-
-/// What the lookup came back with. A miss and a failure look the same to the
-/// user but must not be treated the same: a miss is the final answer for that
-/// track, a failure is worth trying again.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Outcome {
-    Found(CatalogInfo),
-    /// The catalog was searched and does not have this track.
-    Missing,
-    /// The lookup never completed — offline, timed out, or the API refused.
-    Failed,
-}
-
-#[derive(Debug, Clone)]
-pub struct Resolved {
-    pub key: String,
-    pub outcome: Outcome,
-}
 
 pub struct Resolver {
     /// `None` when the worker could not be started — the same degraded state
@@ -178,7 +143,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
         // YouTube Music's own search first: it is not under the iTunes rate
         // limit, so a hit here never waits for one.
         let mut youtube_music_failed = false;
-        if request.youtube_music {
+        if request.source == Source::YouTubeMusic {
             match youtube_music_lookup(&http, &request, &country) {
                 Ok(Some(catalog)) => {
                     cache.store(cache_key, Some(catalog.clone()));
@@ -192,7 +157,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                 }
             }
             queue.drain_from(&requests);
-            if queue.has_newer() {
+            if queue.has_newer(request.source) {
                 continue;
             }
         }
@@ -203,7 +168,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
             // Waiting is exactly when a newer track arrives, so look again
             // before spending the slot on one that is no longer playing.
             queue.drain_from(&requests);
-            if queue.has_newer() {
+            if queue.has_newer(request.source) {
                 continue;
             }
             if let Some(catalog) = cache.get(&cache_key) {
@@ -215,7 +180,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
 
         let storefronts = itunes::storefronts(
             &country,
-            if request.youtube_music {
+            if request.source == Source::YouTubeMusic {
                 &OTHER_STOREFRONTS
             } else {
                 &[]
@@ -229,7 +194,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                 // limit, and a newer track is a reason to stop asking about this one.
                 thread::sleep(MIN_REQUEST_INTERVAL);
                 queue.drain_from(&requests);
-                if queue.has_newer() {
+                if queue.has_newer(request.source) {
                     // Not a failure: nothing was refused, so neither the
                     // backoff nor a retry is owed. Dropped unanswered, since
                     // the track it was for is no longer playing.
@@ -249,7 +214,7 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
                             &request.album,
                         )
                         .map(itunes::catalog_from)
-                        .map(|catalog| for_source(catalog, request.youtube_music));
+                        .map(|catalog| for_source(catalog, request.source == Source::YouTubeMusic));
                         if found.is_some() || attempt + 1 == storefronts.len() {
                             outcome = Outcome::from_cached(found.clone());
                             // Only a real answer is cached: a temporary failure must
@@ -293,62 +258,11 @@ fn worker(requests: Receiver<Request>, results: Sender<Resolved>, wake: Arc<Wake
 
 fn send(results: &Sender<Resolved>, wake: &WakeEvent, request: &Request, outcome: Outcome) {
     let _ = results.send(Resolved {
+        source: request.source,
         key: request.key.clone(),
         outcome,
     });
     let _ = wake.set();
-}
-
-impl Outcome {
-    fn from_cached(catalog: Option<CatalogInfo>) -> Self {
-        match catalog {
-            Some(catalog) => Outcome::Found(catalog),
-            None => Outcome::Missing,
-        }
-    }
-}
-
-/// At most one outstanding request.
-///
-/// A burst of skips leaves several requests queued and only the last is still
-/// on screen, so the earlier ones are dropped rather than each spending a
-/// rate-limit slot on a track nobody is listening to any more.
-struct Queue {
-    pending: Option<Request>,
-}
-
-impl Queue {
-    fn new() -> Self {
-        Self { pending: None }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.pending.is_none()
-    }
-
-    /// Replaces whatever was queued: only the newest track is worth asking about.
-    fn push(&mut self, request: Request) {
-        self.pending = Some(request);
-    }
-
-    fn pop(&mut self) -> Option<Request> {
-        self.pending.take()
-    }
-
-    /// Whether a newer request arrived while we were waiting, which makes the
-    /// one in hand not worth a lookup.
-    fn has_newer(&self) -> bool {
-        self.pending.is_some()
-    }
-
-    /// Takes everything already queued without blocking. A disconnected
-    /// channel needs no special case: the queue drains, and the blocking
-    /// `recv` at the top of the worker loop ends it.
-    fn drain_from(&mut self, requests: &Receiver<Request>) {
-        while let Ok(request) = requests.try_recv() {
-            self.push(request);
-        }
-    }
 }
 
 struct Cache {
@@ -427,7 +341,11 @@ fn for_source(catalog: CatalogInfo, youtube_music: bool) -> CatalogInfo {
 /// The same track can be asked about by both sources, and their answers differ
 /// in which service the links point at.
 fn cache_key(request: &Request) -> String {
-    let source = if request.youtube_music { "ytm" } else { "am" };
+    let source = if request.source == Source::YouTubeMusic {
+        "ytm"
+    } else {
+        "am"
+    };
     format!("{source}\u{0}{}", request.key)
 }
 

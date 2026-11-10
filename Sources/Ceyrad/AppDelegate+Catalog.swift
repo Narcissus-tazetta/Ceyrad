@@ -33,7 +33,7 @@ extension AppDelegate {
             name: track.name, artist: track.artist, durationSec: track.durationSec,
             appLanguage: settings.language.rawValue
         ) { [weak self] outcome in
-            guard let self else { return }
+            guard let self, self.state(source).track?.identity == track.identity else { return }
             if case .found = outcome {
                 return self.applyCatalog(source, target: track, outcome: outcome)
             }
@@ -41,6 +41,7 @@ extension AppDelegate {
             // 地域のストアとは表記が違いうるので、US・JPのストアも引く。
             self.itunes.resolve(
                 name: track.name, artist: track.artist, album: track.album,
+                source: source,
                 fallbackStorefronts: ["US", "JP"]
             ) { [weak self] outcome in
                 guard let self else { return }

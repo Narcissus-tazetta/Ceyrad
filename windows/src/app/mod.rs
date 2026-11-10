@@ -28,8 +28,9 @@ use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::SetEvent;
 
 use crate::app::connection::{Connection, Sent};
-use crate::catalog::{Outcome, Request as CatalogRequest, Resolver};
+use crate::catalog::Resolver;
 use crate::core::activity_builder;
+use crate::core::catalog::{Outcome, Request as CatalogRequest};
 use crate::core::debouncer::Debouncer;
 use crate::core::i18n::{t, AppLanguage};
 use crate::core::menu_model::{self, MenuAction};
@@ -555,7 +556,7 @@ impl App {
             Some(session) => {
                 let update = self.apply_session(Source::AppleMusic, session, now);
                 changed |= update.changed;
-                track_changed |= update.track_changed;
+                track_changed |= update.track_changed && self.displayed == Some(Source::AppleMusic);
             }
             None => changed |= self.clear_source(Source::AppleMusic),
         }
@@ -566,7 +567,8 @@ impl App {
                     self.timers.cancel(Timer::YouTubeLoss);
                     let update = self.apply_session(Source::YouTubeMusic, session, now);
                     changed |= update.changed;
-                    track_changed |= update.track_changed;
+                    track_changed |=
+                        update.track_changed && self.displayed == Some(Source::YouTubeMusic);
                 }
                 // Not cleared yet: a track change reads as a plain video for a
                 // moment while the album catches up. See `LOSS_GRACE`.
@@ -756,7 +758,7 @@ impl App {
             artist: track.artist.clone(),
             album: track.album.clone(),
             duration_sec: track.duration_sec,
-            youtube_music: source == Source::YouTubeMusic,
+            source,
             app_language: match self.settings.language {
                 AppLanguage::En => "en",
                 AppLanguage::Ja => "ja",
@@ -787,7 +789,7 @@ impl App {
                     .state(source)
                     .track
                     .as_ref()
-                    .is_some_and(|track| track.matches_identity(&resolved.key));
+                    .is_some_and(|track| resolved.matches(source, track));
                 if still_playing {
                     self.apply_catalog_outcome(source, resolved.outcome.clone());
                 }

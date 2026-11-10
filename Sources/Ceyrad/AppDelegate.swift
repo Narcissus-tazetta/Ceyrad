@@ -19,9 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notificationName: AppleMusic.notificationName,
         parse: AppleMusic.parse
     )
-    let rpc = DiscordRPCClient()
-    let itunes = ITunesSearchClient()
-    let youtubeSearch = YouTubeMusicSearchClient()
+    let rpc: DiscordRPCConnection
+    let itunes: ITunesSearchClient
+    let youtubeSearch: YouTubeMusicSearchClient
     let debouncer = Debouncer(delay: 0.8)
     private var menuBar: MenuBarController!
     private var updaterController: SPUStandardUpdaterController!
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var lastSent: LastSent = .nothing
 
     let reconnect = ReconnectBackoff()
-    let pauseHide = PauseHideTimer()
+    let pauseHide: PauseHideTimer
     var catalogRetryWork: [MusicSource: DispatchWorkItem] = [:]
 
     // YouTube Music（AppDelegate+YouTubeMusic.swift）
@@ -53,6 +53,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// タブが古いかもしれない（Firefox）ときの読み直し。何曲目の何回目かを数える。
     var youtubeTabRetries: (identity: String, count: Int)?
     var youtubeTabRetryWork: DispatchWorkItem?
+
+    init(
+        rpc: DiscordRPCConnection = DiscordRPCClient(),
+        itunes: ITunesSearchClient = ITunesSearchClient(),
+        youtubeSearch: YouTubeMusicSearchClient = YouTubeMusicSearchClient(),
+        pauseHide: PauseHideTimer = PauseHideTimer()
+    ) {
+        self.rpc = rpc
+        self.itunes = itunes
+        self.youtubeSearch = youtubeSearch
+        self.pauseHide = pauseHide
+        super.init()
+    }
 
     /// この接続でDiscordに送った最後の内容。
     ///
@@ -194,11 +207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             requestMissingCatalog(source)
             if source == .appleMusic { backfillPositionIfNeeded(info) }
         }
-        reevaluate(trackChanged: trackChanged)
+        reevaluate(trackChangedIn: trackChanged ? source : nil)
     }
 
     /// どのソースを出すか・どの client ID で繋ぐかを決め直す。状態が動いたら必ずここを通る。
-    func reevaluate(trackChanged: Bool = false) {
+    func reevaluate(trackChangedIn source: MusicSource? = nil) {
         let active = SourceSelector.select(appleMusic: appleMusic, youtubeMusic: youtube)
         let sourceChanged = active != displayedSource
         displayedSource = active
@@ -210,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if displaying {
             // 一時停止したまま曲を替えた場合も「操作した」とみなし、
             // タイムアウト済みなら表示を復活させてタイマーを計り直す
-            if trackChanged { pauseHide.cancel() }
+            if source == active { pauseHide.cancel() }
             updatePauseTimer()
             pushActivity()
         }

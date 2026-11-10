@@ -2,6 +2,7 @@ pub mod activity_builder;
 pub mod apple_music;
 pub mod aumid;
 pub mod backoff;
+pub mod catalog;
 pub mod debouncer;
 pub mod format_time;
 pub mod i18n;

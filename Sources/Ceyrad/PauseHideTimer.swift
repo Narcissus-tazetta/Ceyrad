@@ -9,6 +9,11 @@ final class PauseHideTimer {
     /// 一時停止が続いたので表示を消した状態か。
     private(set) var hasFired = false
     private var work: DispatchWorkItem?
+    private let secondsPerMinute: TimeInterval
+
+    init(secondsPerMinute: TimeInterval = 60) {
+        self.secondsPerMinute = secondsPerMinute
+    }
 
     /// 一時停止中なら計り始める。
     ///
@@ -24,7 +29,7 @@ final class PauseHideTimer {
             onFire()
         }
         work = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + Double(minutes) * 60, execute: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(minutes) * secondsPerMinute, execute: item)
     }
 
     /// 計測も「消した」という事実も取り消す。再生再開・曲操作・表示切替で呼ばれる。

@@ -240,11 +240,11 @@ final class YouTubeMusicSearchClient {
     )
     private let session: URLSession
 
-    init() {
+    init(session: URLSession? = nil) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
         config.timeoutIntervalForResource = 15
-        session = URLSession(configuration: config)
+        self.session = session ?? URLSession(configuration: config)
     }
 
     /// 結果は `CatalogOutcome`: 全言語で答えが得られて行が無ければ `.missing`、答えが得られなければ `.failed`。

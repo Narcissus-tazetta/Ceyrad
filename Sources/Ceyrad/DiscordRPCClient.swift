@@ -2,10 +2,19 @@ import Darwin
 import Foundation
 import os
 
+protocol DiscordRPCConnection: AnyObject {
+    var state: DiscordRPCClient.ConnState { get }
+    var onStateChange: ((DiscordRPCClient.ConnState) -> Void)? { get set }
+    func connect(clientId: String)
+    func setActivity(_ activity: [String: Any]?)
+    func shutdown(clearActivity: Bool)
+    func shutdownSync(clearActivity: Bool)
+}
+
 /// Discord IPC（Unixドメインソケット）クライアント。
 /// ソケットは `$TMPDIR/discord-ipc-{0..9}` にある（Application Supportではない点に注意）。
 /// 公開APIはメインスレッドから呼ぶ。ソケットI/Oは専用キューで行う。
-final class DiscordRPCClient {
+final class DiscordRPCClient: DiscordRPCConnection {
     enum ConnState {
         case disconnected
         case connecting
