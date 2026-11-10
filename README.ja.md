@@ -118,7 +118,7 @@ Apple Silicon（macOS 26.6）上で、CPUとスレッド数は`top -pid <pid>`�
 
 ### ビルド
 
-Xcode Command Line Tools（Swift 5.9+）が必要。
+アプリバンドルのビルドには、Icon Composer形式のアイコンを扱えるXcode 26以降が必要。`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`でXcodeを選択する。実行ファイル単体のビルドはXcode Command Line Tools（Swift 5.9+）で行える。
 
 ```sh
 ./make-app.sh

@@ -118,7 +118,7 @@ See [DESIGN.md](DESIGN.md) for design details.
 
 ### Build
 
-Requires Xcode Command Line Tools (Swift 5.9+).
+Building the app bundle requires Xcode 26 or later for the Icon Composer app icon. Select Xcode with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`. The plain executable only requires Xcode Command Line Tools (Swift 5.9+).
 
 ```sh
 ./make-app.sh

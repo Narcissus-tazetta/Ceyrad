@@ -13,6 +13,14 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp .build/release/Ceyrad "$APP/Contents/MacOS/Ceyrad"
 cp Support/Info.plist "$APP/Contents/Info.plist"
+xcrun actool Support/AppIcon.icon \
+    --compile "$APP/Contents/Resources" \
+    --platform macosx --target-device mac \
+    --minimum-deployment-target 13.0 --app-icon AppIcon \
+    --output-partial-info-plist .build/app-icon-info.plist \
+    --output-format human-readable-text
+/usr/libexec/PlistBuddy -c "Merge .build/app-icon-info.plist" "$APP/Contents/Info.plist"
+# 古いmacOSでは従来の絵柄を使い、新しいmacOSではAssets.carから描画する。
 cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 

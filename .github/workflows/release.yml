@@ -24,6 +24,8 @@ concurrency:
 jobs:
   build-and-release:
     runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       # サードパーティのactionはコミットSHAで固定する。このジョブはcontents: writeを
       # 持ちmainへpushもするため、可変タグ（v2 / stable）のまま使うと差し替えの影響が大きい。
